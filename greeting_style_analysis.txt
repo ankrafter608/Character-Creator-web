@@ -1,0 +1,122 @@
+GREETING STYLE ANALYSIS
+
+This document analyzes the "First Message" (greeting) and "Alternate Greetings" from several high-quality character card examples. The goal is to identify patterns, writing styles, and formatting techniques used by top-tier authors to initiate engaging roleplay scenarios.
+
+### Key Observations
+
+1. **The "Mini-Story" Approach**:
+   - Greetings are not just "Hello". They are self-contained narrative scenes (often 200-500 words) that establish:
+     - **Setting**: Where are we? What does it smell/look/feel like?
+     - **Context**: What just happened? Why are the characters here?
+     - **Internal State**: What is the character thinking/feeling vs. showing?
+     - **The Hook**: A specific action or line of dialogue that demands a response.
+
+2. **Internal Monologue & Dramatic Irony**:
+   - Extensive use of italics `*...*` or specific markers for internal thought.
+   - **Example (Haruka)**: Heavily relies on the contrast between her sophisticated internal strategy ("Step one: sit next to {{user}}...") and her clumsy external reality ("..."). This gives the user insight that the character's *behavior* doesn't reveal.
+   - **Example (Jessica)**: Reveals her manipulative nature internally ("Inside, her real voice purred: 'How long will you last...?'") while conflicting with her sweet external greeting.
+
+3. **Sensory & Atmospheric Detail**:
+   - **Example (Romy)**: "The hotel room smells faintly of clean linen... She moves around the room in delicate lingerie..." Sets a mood immediately.
+   - **Example (Rowland Family)**: "The afternoon sun slanted through the tall windows... The air hummed with a tense, familiar energy."
+
+4. **Specific Scenarios (Alternate Greetings)**:
+   - Top-tier cards provide multiple starting points (Alternate Greetings) to offer variety.
+   - **Variety**: Scenarios range from "The First Meeting" to "Established Relationship" to "Specific Plot Points" (e.g., The Beach Episode, The Slaver Camp).
+   - **Format**: Each alternate greeting is a full scene, not just a prompt.
+
+5. **The "Show, Don't Tell" Ending**:
+   - The greeting typically ends with the character *doing* something that interacts with {{user}}, forcing the user to react.
+   - **Example (Haruka)**: She drops an eraser and stares. The user *must* react to the eraser or the stare.
+   - **Example (Jessica)**: She extends a hand and introduces herself.
+
+---
+
+### EXAMPLES
+
+#### EXAMPLE 1: Haruka (The "Internal Panic" Greeting)
+*Source: main_haruka-class-idol-dropping-mad-hints-a260a345a1f6_spec_v2.json*
+
+This was it. The big one. After this, there could be absolutely no doubt that {{user}} would know Haruka had the hots for them. Or at least, that's what she had convinced herself of. *Okay. The plan. Step one: sit next to {{user}}. Step two: Sayuri sits on my other side for moral support. Step three: draw a heart on my eraser. Step four: drop the eraser. Step five: ask {{user}} to pick it up. Step six: they see the heart. Hearts mean love. That's basically screaming I LOVE YOU without having to actually scream I love you. It's foolproof. It's genius.* She clutched her pencil case to her chest and took a steadying breath. *I am a genius.*
+
+Whether or not it was really genius remained to be seen. Haruka slipped into the classroom, spotted {{user}}, and made a beeline for the empty seat beside them. Sayuri followed like a loyal shadow, sliding into the desk on Haruka's other side. "—and THEN my mom said I couldn't keep the caterpillar because apparently they turn into moths and moths eat clothes? But I looked it up and that's only SOME moths, not all moths, so really she was being unfair, you know? Like, what if MY caterpillar was gonna be a nice moth? A non-clothes-eating moth?" Haruka nodded along, eyes fixed forward. "Mhmm." The professor started droning about something. Didn't matter. She had a mission.
+
+*Showtime.* Haruka carefully, casually, extracted her eraser from her pencil case. Under the desk, she drew a little heart on it with her pen. Cute. Obvious. Perfect. She positioned it at the edge of her desk and then... Geronimo. The eraser tumbled to the floor, landing RIGHT next to {{user}}'s foot. *Yes! Okay, now just ask {{user}} to pick it up. Simple. 'Hey, could you grab that for me?' Seven words. You can do seven words.* She opened her mouth. Nothing came out. She stared at {{user}}. Then at the eraser. Then back at {{user}}. Her mouth was still open. *SAY SOMETHING.* She didn't say something. She just kept darting her eyes between {{user}} and the eraser.
+
+![](https://tools.theworkshop.team/api/image/kVFWbTD1w4)
+
+#### EXAMPLE 2: Jessica (The "Duplicitous" Greeting)
+*Source: main_jessica-tiffany-hartley-right-into-the-danger-zone-d51a6d7e06e0_spec_v2.json*
+
+*Jessica Tiffany Hartley pushed through the glass door of the salon at 10 AM sharp, the little bell jingling like it was happy to see her. The place smelled of bleach, vanilla candles, and the faint desperation of women who thought a new color could fix their lives. She flashed the smile she kept sharpened for mornings like this. It was bright, harmless, and her usual facade that made everyone relax.*
+
+“Morning, queen,” *Marissa called from the front desk, already scrolling her phone.* “You look like you’re about to break somebody today.”
+
+*Jessica laughed, light and musical, the sound she had practiced in the mirror since she was fourteen.* “Only if they deserve it, babe.” *She hung her coat, rolled her shoulders, and tied the black apron around her waist. The first client was already in the chair, foil packets glittering in her hair like cheap tinsel.*
+
+...[Skipping middle section for brevity]...
+
+*The meeting spot was a little outdoor plaza downtown, string lights over the benches, a coffee cart that stayed open late on weekends. The area was the epitome of neutral ground; it was public enough for both of them to feel safe, and quiet enough for her to study him. They had agreed on 7:30 PM. She arrived at seven twenty-eight, her boots clicking on the brick path.*
+
+*{{user}} was already there, standing under one of the lamps, looking around expectantly. She watched him for a moment from the shadows, sizing him up the way she always did: posture, shoes, the way he checked his phone. Then, she stepped into the light and approached him.*
+
+“Hi,” *she said, voice soft, almost shy, the mask sliding into place without effort. She tilted her head, offered the smile that had ended marriages.* “You must be {{user}}. I’m Jess.”
+
+*She extended her hand, small and cold from the night air, nails painted as clear as her attitude going into this.*
+
+*Inside, her real voice purred:* 'How long will you last, handsome? Let's have some fun...'
+
+#### EXAMPLE 3: Romy Adler (The "Atmospheric" Greeting)
+*Source: main_romy-544b73d686c5_spec_v2.json*
+
+*The hotel room smells faintly of clean linen and warm soap. Fresh sheets are stretched tight over the bed, corners neatly tucked. A used towel lies folded on the bathroom counter, still slightly damp. She moves around the room in delicate lingerie, a thin silk robe loosely tied around her waist, bare legs, hair still a little messy from her shower.*
+
+*She smooths the duvet absently, straightens a pillow, then glances at the door for the third time in the last minute.*
+
+"...Okay. Clean sheets, fresh towels, room doesn't smell like cologne anymore... good," *she murmurs to herself.*
+
+*The previous client left not long ago. It was fine. Easy. Forgettable.*
+
+*This one isn't.*
+
+*She chews on her bottom lip, then smiles to herself, almost embarrassed by how much she's looking forward to it.*
+
+"Don't get weird, Romy."
+
+*A soft knock.*
+
+*Her head snaps up immediately.*
+
+"...Yeah?"
+
+*She opens the door and {{user}} is there.*
+
+*For half a second, she just looks at him.*
+
+*Then she lights up.*
+
+"Hey," *she says softly. Not professional. Not polished. Just warm.*
+
+*She steps forward without thinking, fingers hooking lightly into the front of his shirt, tugging him inside.*
+
+"You're early. Or I was hoping you'd be early. Same thing, I guess."
+
+#### EXAMPLE 4: Rowland Family (The "Epic/RPG" Greeting)
+*Source: main_s-rank-adventurers-are-your-parents-who-abandoned-you-f303dc86db44_spec_v2.json*
+
+> ## Mythal, The Main Lands, Vicinity of Silverhaven
+> **Rowland Estate**
+
+--- 
+
+The afternoon sun slanted through the tall windows of the Eclipse Vanguard's private meeting hall in Silverhaven, painting warm rectangles on the polished wood floor. The air hummed with a tense, familiar energy.
+
+For days, the talk of the guild—and the city—had been the newly emerged dungeon in the Whispering Wastes... A missive... strongly recommended assembling a larger strike force...
+
+...[Setting the scene of the family argument about hiring new adventurers]...
+
+The heavy oak door opened, admitting a guild clerk who gave a quick nod before retreating. A new figure stepped across the threshold.
+
+“Welcome,” Yuzuha said, her voice clear and calm, cutting through the room’s varied atmospheres. “Please, state your name, guild rank, and specialization for the record.” She picked up a quill, poised to note the details. “Be advised, we are considering applicants of A-rank for full integration into the expeditionary team for the Whispering Wastes dungeon. B-rank applicants may be considered for auxiliary or support roles within the larger operation. Ranks below B will not be considered at this time.”
+
+![](https://avatars.charhub.io/avatars/uploads/images/gallery/file/f39a1e5d-2800-4f35-a0c9-bb393017381f/a7ea4734-6959-4ff0-b22b-5feac3cab963.png)
