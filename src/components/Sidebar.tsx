@@ -12,6 +12,7 @@ const navItems: { id: PageId; icon: string; label: string }[] = [
     { id: 'autonomous', icon: '🤖', label: 'Autonomous Mode' },
     { id: 'lorebook', icon: '📚', label: 'Lorebook Editor' },
     { id: 'file_manager', icon: '📂', label: 'File Manager' },
+    { id: 'scraper', icon: '🌐', label: 'Wiki Scraper' },
     { id: 'cleaner', icon: '🧹', label: 'Lore Cleaner' },
     { id: 'history', icon: '📜', label: 'History & Backups' },
     { id: 'settings', icon: '⚙️', label: 'Settings' },
@@ -47,7 +48,7 @@ export const Sidebar: FC<SidebarProps> = ({ currentPage, onPageChange }) => {
 
                 <div className="nav-section">
                     <div className="nav-section-title">Utilities</div>
-                    {navItems.slice(4, 5).map((item) => (
+                    {navItems.slice(4, 7).map((item) => (
                         <button
                             key={item.id}
                             className={`nav-item ${currentPage === item.id ? 'active' : ''}`}
@@ -61,7 +62,7 @@ export const Sidebar: FC<SidebarProps> = ({ currentPage, onPageChange }) => {
 
                 <div className="nav-section" style={{ marginTop: 'auto' }}>
                     <div className="nav-section-title">System</div>
-                    {navItems.slice(5).map((item) => (
+                    {navItems.slice(7).map((item) => (
                         <button
                             key={item.id}
                             className={`nav-item ${currentPage === item.id ? 'active' : ''}`}

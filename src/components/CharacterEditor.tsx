@@ -60,6 +60,14 @@ const fields: { id: keyof CharacterData; label: string; icon: string; rows: numb
         placeholder: '<START>\n{{user}}: Hello!\n{{char}}: *waves* Hi there! Nice to meet you!',
         colSpan: 6
     },
+    {
+        id: 'creator_notes',
+        label: "Author's Note",
+        icon: '📓',
+        rows: 6,
+        placeholder: "Author's notes about the character, greeting summaries, usage tips...",
+        colSpan: 12
+    },
 ];
 
 export const CharacterEditor: FC<CharacterEditorProps> = ({ character, onChange, onOpenLibrary, onNew, settings }) => {
@@ -105,7 +113,7 @@ export const CharacterEditor: FC<CharacterEditorProps> = ({ character, onChange,
                 scenario: character.scenario,
                 first_mes: character.first_mes,
                 mes_example: character.mes_example,
-                creator_notes: "",
+                creator_notes: character.creator_notes,
                 system_prompt: "",
                 post_history_instructions: "",
                 tags: [],

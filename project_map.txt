@@ -1,0 +1,105 @@
+# Character Creator - Project Map & Developer Guide
+# Last Updated: 2026-02-13
+
+## 1. Project Overview
+A comprehensive tool for creating, editing, and managing AI characters and lorebooks for roleplay. Features a local-first architecture with AI integration (OpenAI/Gemini/Ollama) for automated content generation and refinement.
+
+## 2. Core Architecture
+- **src/main.tsx**: Application entry point. Mounts the React app.
+- **src/App.tsx**: The central nervous system.
+  - Manages global state (character, lorebook, settings, files, chat sessions).
+  - Handles routing (currentPage state).
+  - Contains the main chat integration logic (`handleSendMessage`, `handleRegenerate`) and system prompt construction.
+  - Wiring for all sub-components.
+- **src/index.css**: Global styles, CSS variables, and theme definitions.
+
+## 3. Components (`src/components/`)
+
+### Navigation & Layout
+- **Sidebar.tsx**: Main navigation sidebar. Defines the `PageId` routing.
+- **ChatSidebar.tsx**: Right-hand sidebar for managing chat history and sessions.
+- **HistoryViewer.tsx**: Visualizes the undo/history stack for character and lorebook changes.
+
+### Character Tools
+- **CharacterEditor.tsx**: Main form for editing character fields (Name, Description, Personality, First Message, etc.).
+  - Now includes "Author's Note" (`creator_notes`) field.
+  - Handles JSON export.
+- **CharacterLibrary.tsx**: Grid view to manage, load, and delete saved characters.
+- **AutonomousMode.tsx**: "Self-interview" mode where the AI asks the character questions to flesh them out.
+- **ArtsManager.tsx**: Tool for generating image prompts (Stable Diffusion style) based on character data.
+
+### Lorebook Tools
+- **LorebookEditor.tsx**: Advanced editor for World Info/Lorebooks.
+  - Supports recursive scanning, constant/selective entries, and keyword management.
+- **LorebookLibrary.tsx**: Manager for saved lorebooks.
+
+### Utilities
+- **WikiScraper.tsx**: 🌐 **[NEW]** MediaWiki scraper.
+  - Auto-detects wiki APIs (Fandom, Wikipedia).
+  - Searches and downloads pages as plain text.
+  - Chat integration for AI-assisted research.
+- **LoreCleaner.tsx**: 🧹 **[NEW]** AI text cleaner.
+  - Modes: Strip (format removal), Normal (summarize), Heavy (encyclopedia style).
+  - Cleans raw text files for efficient token usage.
+- **FileManager.tsx**: Manages the "Knowledge Base" (KB) files attached to the project.
+  - Text, PDF, JSON support.
+  - Files here are injected into the AI context via `filesContext`.
+
+### System
+- **Settings.tsx**: Configuration for API keys, model selection, custom endpoints, and UI preferences.
+- **ConnectionSettings.tsx**: Manages connection profiles (e.g., presets for different backends).
+- **PresetEditor.tsx**: Editor for system prompt presets (formatting rules, jailbreaks).
+- **ErrorBoundary.tsx**: Catch-all for React rendering errors.
+
+## 4. Services (`src/services/`)
+- **api.ts**: Centralized API handler.
+  - `generateCompletion`: Unified function for OpenAI-compatible and Gemini API calls.
+  - Handles streaming and non-streaming requests.
+- **library.ts**: Local file system interaction (loading/saving JSONs) - *Note: mostly browser-based storage wrappers in this version.*
+
+## 5. Utilities (`src/utils/`)
+- **characterParser.ts**: Critical logic for parsing AI responses.
+  - `parseCharacterResponse`: Extracts character fields from JSON output.
+  - `parseLorebookResponse`: Extracts lorebook entries from JSON output.
+- **storage.ts**: `localStorage` wrapper for persisting application state.
+- **tokenCounter.ts**: Simple token estimation logic (char count / 4).
+- **diffUtils.ts**: Utilities for showing diffs in history viewer.
+- **messageCleaner.ts**: Helpers to clean up chat message content.
+
+## 6. Types (`src/types/index.ts`)
+- `PageId`: Navigation routing keys.
+- `CharacterData`: Core character interface (now includes `creator_notes`).
+- `LorebookData` / `LorebookEntry`: Lorebook structure.
+- `KBFile`: Attached file structure.
+- `APISettings` / `ChatSession`: System configuration types.
+- `AppState`: Global state interface.
+
+## 7. Key Workflows
+
+### AI Generation Loop
+1. User types in generic Chat or specific tool (e.g. Scraper).
+2. `App.tsx` constructs `systemPrompt`:
+   - Base instructions (from Preset)
+   - Current Character/Lorebook JSON
+   - `filesContext` (Content of enabled KB files)
+   - Tool-specific formatting rules (e.g., "Output JSON array").
+3. `api.ts` calls the LLM.
+4. Response is received in `App.tsx`.
+5. Response is passed to `characterParser.ts`.
+6. If structured data (JSON) is found:
+   - `App.tsx` auto-updates `character` or `lorebook` state.
+   - Or `kbFiles` (for Scraper).
+
+### Wiki Scraper Flow
+1. User enters URL in `WikiScraper.tsx`.
+2. Chat request in App.tsx (PageId='scraper').
+3. System prompt instructs AI to output JSON: `{"pages": ["Title 1", "Title 2"]}`.
+4. App.tsx detects JSON, parses titles.
+5. Calls `WikiScraper.searchWiki` -> `fetchPageContent`.
+6. Saves content as new `KBFile`.
+
+### Lore Cleaner Flow
+1. User serves files in `LoreCleaner.tsx`.
+2. "Clean Selected" calls `generateCompletion` directly (bypassing App chat).
+3. Uses specialized prompts (Strip/Summary/Heavy).
+4. Updates file content in place, saving original to `originalContent`.

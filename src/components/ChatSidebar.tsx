@@ -1,6 +1,7 @@
 import type { FC } from 'react';
 import { useState, useEffect, useRef } from 'react';
 import type { ChatSession } from '../types';
+import { cleanAssistantMessage } from '../utils/messageCleaner';
 
 interface ChatSidebarProps {
     isOpen: boolean;
@@ -157,7 +158,10 @@ export const ChatSidebar: FC<ChatSidebarProps> = ({
                             activeSession.messages.map((msg, index) => (
                                 <div key={msg.id} className={`chat-message-bubble ${msg.role} ${msg.error ? 'error' : ''}`}>
                                     <div className="message-bubble-content">
-                                        {msg.content || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>(empty)</span>}
+                                        {msg.role === 'assistant' 
+                                            ? cleanAssistantMessage(msg.content || '') 
+                                            : (msg.content || <span style={{ fontStyle: 'italic', opacity: 0.5 }}>(empty)</span>)
+                                        }
                                     </div>
                                     <div className="message-actions">
                                         {msg.role === 'assistant' && (

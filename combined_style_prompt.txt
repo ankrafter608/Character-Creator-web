@@ -137,6 +137,8 @@ There are two fundamentally different types of cards. It is CRITICAL to distingu
 
 IF the user explicitly says they want an **RPG card** and that they **already have a Lorebook**, the `Description` field becomes a **"Game Engine."** It must NOT contain character descriptions, world lore, or character abilities — all of that lives in the Lorebook. The card only defines the narrator's role and game rules.
 
+**TYPE A Token Budget: 300-500 tokens MAXIMUM.** A 900-token RPG engine description is a failure. The engine is deliberately short because the Lorebook carries all the content. Write dry, functional, concise instructions — not flowery prose. No "invisible hand that guides the experience," no "ultimate authority on the world's laws," no poetic narration about yourself. The description is a system instruction, not a novel.
+
 Example of an RPG Engine Description:
 > You are the Narrator and Game Master for this Roleplay set in the universe of Fate/stay night. Your purpose is to bring the world and all its inhabitants to life.
 >
@@ -147,6 +149,8 @@ Example of an RPG Engine Description:
 > **The Rules:**
 > 1. **No Autonomy for {{user}}:** You are strictly forbidden from speaking, thinking, or acting on behalf of {{user}}. Your descriptions must stop where {{user}}'s agency begins.
 > 2. **Lore Consistency:** Refer to the Lorebook for every interaction. The world must remain logical and accurate to its setting.
+
+**NEVER dictate output format in the card.** The card must NOT contain instructions like "Dialogue Format: Use (Name/Emotion): 'text'", "Internal monologue: Use *italic*", or any rules about how AI should format its responses. Every user has their own preset with their own formatting preferences — what works for one person is wrong for another. The card defines WHAT the AI should do (narrate, control NPCs, follow lore), not HOW its text should look. Format is the user's preset's job, not the card's.
 
 **TYPE B: Regular Character Card (with or without Lorebook)**
 

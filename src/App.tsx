@@ -6,6 +6,7 @@ import { AutonomousMode } from './components/AutonomousMode';
 import { LorebookEditor } from './components/LorebookEditor';
 import { LoreCleaner } from './components/LoreCleaner';
 import { FileManager } from './components/FileManager';
+import { WikiScraper, getApiUrl, searchWiki, type QueueItem } from './components/WikiScraper';
 import { CharacterLibrary } from './components/CharacterLibrary';
 import { LorebookLibrary } from './components/LorebookLibrary';
 import { Settings } from './components/Settings';
@@ -23,6 +24,7 @@ const defaultCharacter: CharacterData = {
   scenario: '',
   first_mes: '',
   mes_example: '',
+  creator_notes: '',
   alternate_greetings: [],
 };
 
@@ -62,6 +64,9 @@ function App() {
   const [artPrompts, setArtPrompts] = useState<ArtPrompt[]>([]);
   const [isCharacterLibraryOpen, setIsCharacterLibraryOpen] = useState(false);
   const [isLorebookLibraryOpen, setIsLorebookLibraryOpen] = useState(false);
+
+  const [wikiUrl, setWikiUrl] = useState(savedState?.wikiUrl || 'https://typemoon.fandom.com');
+  const [wikiQueue, setWikiQueue] = useState<QueueItem[]>([]);
 
   // Profile state
   const [presetProfiles, setPresetProfiles] = useState<PresetProfile[]>(savedState?.presetProfiles || []);
@@ -242,6 +247,12 @@ function App() {
     // Prepare system prompt for Character Generation
     let systemPrompt = '';
 
+    // Collect enabled file contents to inject into AI context
+    const enabledFiles = kbFiles.filter(f => f.enabled && f.content);
+    const filesContext = enabledFiles.length > 0
+      ? '\n\nAttached Reference Files:\n' + enabledFiles.map(f => `--- ${f.name} ---\n${f.content}`).join('\n\n')
+      : '';
+
     if (currentPage === 'character') {
       let userPromptContent = '';
 
@@ -259,61 +270,55 @@ function App() {
 
 Task: Generate or update the character "${character.name || 'New Character'}" based on the chat context.
 
-Assistant Persona:
-- Be conversational, confident, and helpful.
-- Briefly summarize what you changed and why (e.g., "I've updated the description to focus on...").
-- Ask clarifying questions if there are ambiguous details.
-- Do NOT output internal thought processes or "Refining..." logs.
-
 Output Format: 
-1. A conversational response to the user.
-2. The Character JSON object, strictly wrapped in \`\`\`json code blocks.
+1. The Character JSON object, strictly wrapped in \`\`\`json code blocks.
+2. A conversational response to the user.
 
+\`\`\`json
 {
   "name": "Character Name",
-  "description": "CRITICAL: ALL personality, appearance, backstory, and visual details MUST go here. Do NOT use the personality field.",
-  "personality": "", 
+  "description": "ALL personality, appearance, backstory, and visual details go here.",
+  "personality": "",
   "scenario": "Current setting and context",
   "first_mes": "Engaging opening message",
-  "mes_example": "Dialogue examples (e.g. <START>\\n{{user}}: Hello\\n{{char}}: Hi!)",
+  "mes_example": "Dialogue examples",
+  "creator_notes": "Author's summary of the character and greetings (only if user requests it)",
   "alternate_greetings": ["Alt greeting 1", "Alt greeting 2"]
 }
+\`\`\`
 
 Strict Rules:
-1. The "personality" field MUST remain an empty string ("").
-2. "description" must be comprehensive and detailed.
-3. ALWAYS include the JSON update at the end of your response.
+1. ALWAYS include the JSON block in your response.
+2. The "personality" field MUST remain an empty string ("").
+3. "description" must be comprehensive and detailed.
+4. Do NOT output internal thoughts, verification steps, or reasoning headers like "Constructing...", "[Verification]=[Passed]", "Refining...". Output ONLY the JSON and a brief conversational response.
 `;
       } else {
-        // Fallback default prompt
-        systemPrompt = `You are an expert character creator AI designed to generate characters for roleplay.
-System: You are an expert character creator AI.
-Role: Create detailed, immersive roleplay characters in JSON format.
+        systemPrompt = `You are an expert character creator for roleplay.
 Task: Generate or update the character "${character.name || 'New Character'}" based on the chat context.
 
-Assistant Persona:
-- Be conversational, confident, and helpful.
-- Briefly summarize what you changed and why.
-- Ask clarifying questions if needed.
-
 Output Format: 
-1. A conversational response.
-2. The Character JSON object, strictly wrapped in \`\`\`json code blocks.
+1. The Character JSON object, strictly wrapped in \`\`\`json code blocks.
+2. A conversational response.
 
+\`\`\`json
 {
   "name": "Character Name",
-  "description": "CRITICAL: ALL personality, appearance, backstory, and visual details MUST go here. Do NOT use the personality field.",
-  "personality": "", 
+  "description": "ALL personality, appearance, backstory, and visual details go here.",
+  "personality": "",
   "scenario": "Current setting and context",
   "first_mes": "Engaging opening message",
-  "mes_example": "Dialogue examples (e.g. <START>\\n{{user}}: Hello\\n{{char}}: Hi!)",
+  "mes_example": "Dialogue examples",
+  "creator_notes": "Author's summary of the character and greetings (only if user requests it)",
   "alternate_greetings": ["Alt greeting 1", "Alt greeting 2"]
 }
+\`\`\`
 
 Strict Rules:
-1. The "personality" field MUST remain an empty string ("").
-2. "description" must be comprehensive and detailed.
-3. ALWAYS include the JSON update at the end of your response.
+1. ALWAYS include the JSON block in your response.
+2. The "personality" field MUST remain an empty string ("").
+3. "description" must be comprehensive and detailed.
+4. Do NOT output internal thoughts, verification steps, or reasoning headers like "Constructing...", "[Verification]=[Passed]", "Refining...". Output ONLY the JSON and a brief conversational response.
 `;
       }
     } else if (currentPage === 'lorebook') {
@@ -347,10 +352,37 @@ ${JSON.stringify(currentEntriesJson, null, 2)}
 When creating entries, return them as a JSON array wrapped in \`\`\`json code blocks with this structure:
 [{ "keys": ["keyword1"], "secondary_keys": [], "content": "lore text", "comment": "Entry Title", "constant": false, "selective": false, "insertion_order": 100, "position": "before_char" }]
 
-Do not duplicate existing entries. Do not include IDs.`;
+Strict Rules:
+1. ALWAYS start with the JSON block.
+2. Follow it with a brief summary of the entries you created.
+3. Do not duplicate existing entries. Do not include IDs.`;
+    } else if (currentPage === 'scraper') {
+      const scraperApiUrl = getApiUrl(wikiUrl);
+      systemPrompt = `You are a wiki research assistant. The user wants to find relevant wiki pages to download for their lorebook/character project.
+
+Current wiki: ${wikiUrl}
+API endpoint: ${scraperApiUrl}
+
+Your job:
+1. Understand what the user needs (characters, lore, world-building, etc.)
+2. Suggest specific page titles to search for on the wiki
+3. Output your suggestions as a JSON block so the app can auto-search them
+
+JSON format (wrap in \`\`\`json code block):
+{"pages": ["Page Title 1", "Page Title 2", "Page Title 3"]}
+
+Rules:
+1. ALWAYS include the JSON block with page title suggestions.
+2. After the JSON, briefly explain what you suggested and why.
+3. Use exact page titles as they would appear on the wiki (e.g. "Emiya Shirou" not "shirou emiya").
+4. Suggest 5-15 pages depending on scope.
+5. Think about what's most useful for a lorebook — characters, locations, abilities, factions, key events.`;
     } else {
       systemPrompt = `You are a helpful assistant for the ${currentPage} page.`;
     }
+
+    // Append any enabled file contents to the system prompt
+    systemPrompt += filesContext;
 
     generateCompletion(settings, updatedSession.messages, systemPrompt)
       .then(response => {
@@ -395,6 +427,46 @@ Do not duplicate existing entries. Do not include IDs.`;
               }));
             }
           });
+        }
+
+        // Auto-fetch wiki pages from scraper AI response
+        if (currentPage === 'scraper' && response.content) {
+          const jsonMatch = response.content.match(/```json\s*([\s\S]*?)```/);
+          if (jsonMatch) {
+            try {
+              const parsed = JSON.parse(jsonMatch[1]);
+              const pages: string[] = parsed.pages || [];
+              if (pages.length > 0) {
+                const scraperApiUrl = getApiUrl(wikiUrl);
+                (async () => {
+                  for (const pageTitle of pages) {
+                    try {
+                      // Check if already in queue or files to avoid duplicates
+                      // Note: We can only check queue easily here. Files check is harder without full list scan but valid.
+
+                      const results = await searchWiki(scraperApiUrl, pageTitle);
+                      const exactMatch = results.find(r => r.title.toLowerCase() === pageTitle.toLowerCase()) || results[0];
+
+                      if (exactMatch) {
+                        setWikiQueue(prev => {
+                          if (prev.find(q => q.pageid === exactMatch.pageid)) return prev;
+                          return [...prev, {
+                            pageid: exactMatch.pageid,
+                            title: exactMatch.title,
+                            status: 'pending'
+                          }];
+                        });
+                      }
+                    } catch (e) {
+                      console.error(`Failed to search wiki page: ${pageTitle}`, e);
+                    }
+                  }
+                })();
+              }
+            } catch (e) {
+              console.error('Failed to parse scraper AI response JSON:', e);
+            }
+          }
         }
       })
       .catch(err => {
@@ -453,26 +525,47 @@ Do not duplicate existing entries. Do not include IDs.`;
     // Prepare system prompt for Character Generation
     let systemPrompt = '';
 
+    // Collect enabled file contents to inject into AI context
+    const enabledFiles = kbFiles.filter(f => f.enabled && f.content);
+    const filesContext = enabledFiles.length > 0
+      ? '\n\nAttached Reference Files:\n' + enabledFiles.map(f => `--- ${f.name} ---\n${f.content}`).join('\n\n')
+      : '';
+
     if (currentPage === 'character') {
-      systemPrompt = `You are an expert character creator AI designed to generate characters for roleplay.
-Role: Create detailed, immersive roleplay characters in JSON format compatible with SillyTavern V2.
+      // Inject preset prompts (user's custom rules)
+      let userPromptContent = '';
+      if (settings.active_preset && settings.active_preset.prompts && settings.active_preset.prompts.length > 0) {
+        userPromptContent = settings.active_preset.prompts
+          .filter(p => p.enabled)
+          .map(p => p.content)
+          .join('\n\n');
+      }
+
+      systemPrompt = `${userPromptContent ? userPromptContent + '\n\n' : ''}You are an expert character creator for roleplay.
 Task: Generate or update the character "${character.name || 'New Character'}" based on the chat context.
 
-Output Format: A single valid JSON object.
+Output Format: 
+1. The Character JSON object, strictly wrapped in \`\`\`json code blocks.
+2. A conversational response.
+
+\`\`\`json
 {
   "name": "Character Name",
-  "description": "CRITICAL: ALL personality, appearance, backstory, and visual details MUST go here. Do NOT use the personality field.",
-  "personality": "", 
+  "description": "ALL personality, appearance, backstory, and visual details go here.",
+  "personality": "",
   "scenario": "Current setting and context",
   "first_mes": "Engaging opening message",
-  "mes_example": "Dialogue examples (e.g. <START>\\n{{user}}: Hello\\n{{char}}: Hi!)",
+  "mes_example": "Dialogue examples",
+  "creator_notes": "Author's summary of the character and greetings (only if user requests it)",
   "alternate_greetings": ["Alt greeting 1", "Alt greeting 2"]
 }
+\`\`\`
 
 Strict Rules:
-1. The "personality" field MUST remain an empty string (""). All personality traits must be woven into "description".
-2. "description" must be comprehensive and detailed.
-3. Return ONLY the JSON object, optionally wrapped in \`\`\`json code blocks.
+1. ALWAYS include the JSON block in your response.
+2. The "personality" field MUST remain an empty string ("").
+3. "description" must be comprehensive and detailed.
+4. Do NOT output internal thoughts, verification steps, or reasoning headers like "Constructing...", "[Verification]=[Passed]", "Refining...". Output ONLY the JSON and a brief conversational response.
 `;
     } else if (currentPage === 'lorebook') {
       const currentEntriesJson = lorebook.entries.map(e => ({
@@ -499,10 +592,37 @@ ${JSON.stringify(currentEntriesJson, null, 2)}
 When creating entries, return them as a JSON array wrapped in \`\`\`json code blocks with this structure:
 [{ "keys": ["keyword1"], "secondary_keys": [], "content": "lore text", "comment": "Entry Title", "constant": false, "selective": false, "insertion_order": 100, "position": "before_char" }]
 
-Do not duplicate existing entries. Do not include IDs.`;
+Strict Rules:
+1. ALWAYS start with the JSON block.
+2. Follow it with a brief summary of the entries you created.
+3. Do not duplicate existing entries. Do not include IDs.`;
+    } else if (currentPage === 'scraper') {
+      const scraperApiUrl = getApiUrl(wikiUrl);
+      systemPrompt = `You are a wiki research assistant. The user wants to find relevant wiki pages to download for their lorebook/character project.
+
+Current wiki: ${wikiUrl}
+API endpoint: ${scraperApiUrl}
+
+Your job:
+1. Understand what the user needs (characters, lore, world-building, etc.)
+2. Suggest specific page titles to search for on the wiki
+3. Output your suggestions as a JSON block so the app can auto-search them
+
+JSON format (wrap in \`\`\`json code block):
+{"pages": ["Page Title 1", "Page Title 2", "Page Title 3"]}
+
+Rules:
+1. ALWAYS include the JSON block with page title suggestions.
+2. After the JSON, briefly explain what you suggested and why.
+3. Use exact page titles as they would appear on the wiki (e.g. "Emiya Shirou" not "shirou emiya").
+4. Suggest 5-15 pages depending on scope.
+5. Think about what's most useful for a lorebook — characters, locations, abilities, factions, key events.`;
     } else {
       systemPrompt = `You are a helpful assistant for the ${currentPage} page.`;
     }
+
+    // Append any enabled file contents to the system prompt
+    systemPrompt += filesContext;
 
     generateCompletion(settings, sessionAfterDelete.messages, systemPrompt)
       .then(response => {
@@ -547,6 +667,43 @@ Do not duplicate existing entries. Do not include IDs.`;
               }));
             }
           });
+        }
+
+        // Auto-fetch wiki pages from scraper AI response (regen)
+        if (currentPage === 'scraper' && response.content) {
+          const jsonMatch = response.content.match(/```json\s*([\s\S]*?)```/);
+          if (jsonMatch) {
+            try {
+              const parsed = JSON.parse(jsonMatch[1]);
+              const pages: string[] = parsed.pages || [];
+              if (pages.length > 0) {
+                const scraperApiUrl = getApiUrl(wikiUrl);
+                (async () => {
+                  for (const pageTitle of pages) {
+                    try {
+                      const results = await searchWiki(scraperApiUrl, pageTitle);
+                      const exactMatch = results.find(r => r.title.toLowerCase() === pageTitle.toLowerCase()) || results[0];
+
+                      if (exactMatch) {
+                        setWikiQueue(prev => {
+                          if (prev.find(q => q.pageid === exactMatch.pageid)) return prev;
+                          return [...prev, {
+                            pageid: exactMatch.pageid,
+                            title: exactMatch.title,
+                            status: 'pending'
+                          }];
+                        });
+                      }
+                    } catch (e) {
+                      console.error(`Failed to search wiki page: ${pageTitle}`, e);
+                    }
+                  }
+                })();
+              }
+            } catch (e) {
+              console.error('Failed to parse scraper AI response JSON:', e);
+            }
+          }
         }
       })
       .catch(err => {
@@ -727,6 +884,16 @@ Requirements:
           <LoreCleaner
             files={kbFiles}
             onFilesChange={setKbFiles}
+            settings={settings}
+          />
+        )}
+        {currentPage === 'scraper' && (
+          <WikiScraper
+            onFilesAdd={(newFiles) => setKbFiles(prev => [...prev, ...newFiles])}
+            wikiUrl={wikiUrl}
+            onWikiUrlChange={setWikiUrl}
+            queue={wikiQueue}
+            onQueueChange={setWikiQueue}
           />
         )}
         {currentPage === 'settings' && (

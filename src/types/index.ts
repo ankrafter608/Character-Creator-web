@@ -5,6 +5,7 @@ export interface CharacterData {
     scenario: string;
     first_mes: string;
     mes_example: string;
+    creator_notes: string;
     alternate_greetings: string[];
 }
 
@@ -123,7 +124,7 @@ export interface APISettings {
     tokenizer?: 'gemma' | 'openai' | 'claude';
 }
 
-export type PageId = 'character' | 'autonomous' | 'lorebook' | 'cleaner' | 'settings' | 'file_manager' | 'history' | 'arts';
+export type PageId = 'character' | 'autonomous' | 'lorebook' | 'cleaner' | 'settings' | 'file_manager' | 'history' | 'arts' | 'scraper';
 
 // ... (existing profiles)
 
@@ -185,4 +186,5 @@ export interface AppState {
     characterHistory: CharacterHistoryEntry[];
     lorebookHistory: LorebookHistoryEntry[];
     history?: HistoryEntry[]; // Legacy, for backward compatibility
+    wikiUrl?: string; // Persisted wiki URL
 }

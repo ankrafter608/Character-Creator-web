@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import type { FC } from 'react';
-import type { KBFile } from '../types';
+import type { KBFile, APISettings, ChatMessage } from '../types';
+import { generateCompletion } from '../services/api';
 
 interface LoreCleanerProps {
     files: KBFile[];
     onFilesChange: (files: KBFile[]) => void;
+    settings: APISettings;
 }
 
 type CleanMode = 'strip' | 'summary' | 'heavy_summary';
@@ -27,21 +29,50 @@ const modeDescriptions: Record<CleanMode, { icon: string; label: string; descrip
     },
 };
 
-// Demo files for UI preview
-const demoFiles: KBFile[] = [
-    { id: '1', name: 'world_building.txt', content: 'Lorem ipsum...', enabled: true, tokens: 1234 },
-    { id: '2', name: 'character_backstory.md', content: 'Lorem ipsum...', enabled: true, tokens: 856, cleanMode: 'strip' },
-    { id: '3', name: 'magic_system.txt', content: 'Lorem ipsum...', enabled: false, tokens: 2341 },
-    { id: '4', name: 'factions.json', content: '{}', enabled: true, tokens: 432, cleanMode: 'summary' },
-    { id: '5', name: 'locations.txt', content: 'Lorem ipsum...', enabled: true, tokens: 1567, cleanMode: 'rejected' },
-    { id: '6', name: 'history_timeline.md', content: 'Lorem ipsum...', enabled: true, tokens: 3210 },
-];
+const cleanPrompts: Record<CleanMode, string> = {
+    strip: `You are a text cleaner. Your ONLY job is to remove formatting garbage from the text and return the clean plain text.
 
-export const LoreCleaner: FC<LoreCleanerProps> = ({ files = demoFiles, onFilesChange }) => {
+Remove ALL of the following:
+- Markdown syntax (headers #, bold **, italic *, links [](), etc.)
+- HTML tags (<div>, <span>, <br>, <p>, etc.)
+- JSON/code syntax (braces {}, brackets [], quotes around keys, colons after keys)
+- Code fences and backticks
+- Unnecessary asterisks, underscores, and special characters
+- Empty lines and excessive whitespace
+- Bullet point markers (-, *, •) — keep the text, remove the marker
+
+Rules:
+1. Keep ALL actual text content intact. Do not summarize, rephrase, or remove any information.
+2. Output ONLY the cleaned plain text. No commentary, no explanation, no "Here is the cleaned text:" headers.
+3. Preserve paragraph breaks as single empty lines.`,
+
+    summary: `You are a text cleaner and summarizer. First, remove all formatting garbage (markdown, HTML, JSON syntax, code fences, asterisks, special characters). Then lightly summarize the content — compress it to be more concise while keeping all important information.
+
+Rules:
+1. Remove all formatting noise (markdown, HTML, JSON, code syntax, special characters).
+2. Summarize lightly — shorten verbose passages but keep ALL key facts, names, abilities, relationships, and details.
+3. Do NOT aggressively cut content. This is a light compression, not a heavy one.
+4. Output ONLY the cleaned and summarized text. No commentary, no headers, no "Here is the result:" prefixes.
+5. Do NOT output internal thoughts, reasoning, or "Refining..." messages.`,
+
+    heavy_summary: `You are a meticulous editor. Your job is to condense the text while preserving ALL factual information, dialogue, and characterization details, but removing fluff and repetition.
+
+Rules:
+1. Remove all formatting noise (markdown, HTML, JSON, code syntax, special characters).
+2. Keep ALL facts: what things are, what they do, history, appearance, relationships, quotes.
+3. Only remove: purely decorative flowery prose, excessive repetition, and emotional padding that adds no substance.
+4. Do NOT strip away context that is necessary for understanding.
+5. The output should be dense with information but still readable prose, not just dry bullet points.
+6. CRITICAL: Output ONLY the result text. Do NOT output internal thoughts, "Refining Final Output" headers, or any meta-commentary.`,
+};
+
+export const LoreCleaner: FC<LoreCleanerProps> = ({ files, onFilesChange, settings }) => {
     const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
     const [cleanMode, setCleanMode] = useState<CleanMode>('strip');
     const [searchQuery, setSearchQuery] = useState('');
     const [sortBy, setSortBy] = useState<'name' | 'size' | 'tokens'>('name');
+    const [processing, setProcessing] = useState(false);
+    const [processProgress, setProcessProgress] = useState({ current: 0, total: 0, fileName: '' });
 
     const filteredFiles = files
         .filter((f) => f.name.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -74,6 +105,54 @@ export const LoreCleaner: FC<LoreCleanerProps> = ({ files = demoFiles, onFilesCh
             case 'rejected': return <span className="badge badge-error">❌ Rejected</span>;
             default: return <span className="badge badge-muted">New</span>;
         }
+    };
+
+    const handleCleanSelected = async () => {
+        if (selectedFiles.length === 0 || processing) return;
+        setProcessing(true);
+        setProcessProgress({ current: 0, total: selectedFiles.length, fileName: '' });
+
+        let updatedFiles = [...files];
+
+        for (let i = 0; i < selectedFiles.length; i++) {
+            const fileId = selectedFiles[i];
+            const file = updatedFiles.find(f => f.id === fileId);
+            if (!file) continue;
+
+            setProcessProgress({ current: i + 1, total: selectedFiles.length, fileName: file.name });
+
+            const userMessage: ChatMessage = {
+                id: Date.now().toString(),
+                role: 'user',
+                content: file.content,
+                timestamp: Date.now(),
+            };
+
+            const response = await generateCompletion(settings, [userMessage], cleanPrompts[cleanMode]);
+
+            if (response.content && !response.error) {
+                updatedFiles = updatedFiles.map(f =>
+                    f.id === fileId
+                        ? {
+                            ...f,
+                            originalContent: f.originalContent || f.content,
+                            content: response.content,
+                            cleanMode: cleanMode,
+                            tokens: Math.floor(response.content.length / 4),
+                        }
+                        : f
+                );
+            } else {
+                updatedFiles = updatedFiles.map(f =>
+                    f.id === fileId ? { ...f, cleanMode: 'rejected' } : f
+                );
+            }
+        }
+
+        onFilesChange(updatedFiles);
+        setSelectedFiles([]);
+        setProcessing(false);
+        setProcessProgress({ current: 0, total: 0, fileName: '' });
     };
 
     return (
@@ -146,10 +225,14 @@ export const LoreCleaner: FC<LoreCleanerProps> = ({ files = demoFiles, onFilesCh
                             </div>
                             <button
                                 className="btn btn-primary btn-lg"
-                                disabled={selectedFiles.length === 0}
+                                disabled={selectedFiles.length === 0 || processing}
                                 style={{ minWidth: '200px' }}
+                                onClick={handleCleanSelected}
                             >
-                                ✨ Clean Selected ({selectedFiles.length})
+                                {processing
+                                    ? `⏳ Processing ${processProgress.current}/${processProgress.total}...`
+                                    : `✨ Clean Selected (${selectedFiles.length})`
+                                }
                             </button>
                         </div>
                     </div>
