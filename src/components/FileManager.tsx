@@ -1,14 +1,16 @@
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { FC } from 'react';
 import type { KBFile } from '../types';
+import { countTokens, type TokenizerType } from '../utils/tokenCounter';
 
 interface FileManagerProps {
     files: KBFile[];
     onFilesChange: (files: KBFile[]) => void;
+    tokenizer?: string;
 }
 
-export const FileManager: FC<FileManagerProps> = ({ files, onFilesChange }) => {
+export const FileManager: FC<FileManagerProps> = ({ files, onFilesChange, tokenizer }) => {
     const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -19,6 +21,7 @@ export const FileManager: FC<FileManagerProps> = ({ files, onFilesChange }) => {
     const filteredFiles = files.filter(f =>
         f.name.toLowerCase().includes(searchQuery.toLowerCase())
     );
+
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) {
@@ -32,11 +35,16 @@ export const FileManager: FC<FileManagerProps> = ({ files, onFilesChange }) => {
 
             // Read contents
             let processedCount = 0;
+            // Capture tokenizer value at start of upload to avoid closure staleness
+            const currentTokenizer = tokenizer || 'openai';
+            
             newFiles.forEach((fileObj, index) => {
                 const reader = new FileReader();
                 reader.onload = (evt) => {
                     fileObj.content = evt.target?.result as string;
-                    fileObj.tokens = Math.floor(fileObj.content.length / 4); // Rough estimate
+                    // FIX: Explicitly log and use the captured tokenizer
+                    console.log(`[FileManager] Counting tokens for ${fileObj.name} using ${currentTokenizer}`);
+                    fileObj.tokens = countTokens(fileObj.content, currentTokenizer as TokenizerType);
                     processedCount++;
                     if (processedCount === newFiles.length) {
                         onFilesChange([...files, ...newFiles]);
@@ -44,8 +52,14 @@ export const FileManager: FC<FileManagerProps> = ({ files, onFilesChange }) => {
                 };
                 reader.readAsText(e.target.files![index]);
             });
+            
+            // Reset input value to allow re-uploading same file if needed
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
         }
     };
+
 
     const handleDelete = (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
@@ -60,12 +74,29 @@ export const FileManager: FC<FileManagerProps> = ({ files, onFilesChange }) => {
         onFilesChange(files.map(f => f.id === id ? { ...f, enabled: !f.enabled } : f));
     };
 
+    // Force token recount on mount for files that have 0 tokens (migration/fix)
+    useEffect(() => {
+        const filesNeedingUpdate = files.filter(f => f.tokens === 0 && f.content.length > 0);
+        if (filesNeedingUpdate.length > 0) {
+            console.log('[FileManager] Recounting tokens for loaded files...');
+            onFilesChange(files.map(f => {
+                if ((!f.tokens || f.tokens === 0) && f.content && f.content.length > 0) {
+                    return { ...f, tokens: countTokens(f.content, (tokenizer as TokenizerType) || 'openai') };
+                }
+                return f;
+            }));
+        }
+    }, []); 
+
     const handleContentChange = (newContent: string) => {
         if (selectedFileId) {
+
+            // Log for debugging
+            // console.log(`[FileManager] Re-counting tokens for ${selectedFileId}`);
             onFilesChange(files.map(f => f.id === selectedFileId ? {
                 ...f,
                 content: newContent,
-                tokens: Math.floor(newContent.length / 4)
+                tokens: countTokens(newContent, (tokenizer as TokenizerType) || 'openai')
             } : f));
         }
     };

@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react';
 import type { APISettings, Preset, PresetProfile, ConnectionProfile } from '../types';
 import { ConnectionSettings } from './ConnectionSettings';
 import { PresetEditor } from './PresetEditor';
+import { PROMPT_CONFIGS, getDefaultPrompts } from '../utils/systemPrompts';
+import type { CustomPrompts } from '../utils/systemPrompts';
 
 // Mock default preset based on the JSON we saw
 const defaultPreset: Preset = {
@@ -64,6 +66,9 @@ interface SettingsProps {
     activeConnectionId: string | null;
     onConnectionProfilesChange: (profiles: ConnectionProfile[]) => void;
     onActiveConnectionChange: (id: string | null) => void;
+    // System prompts
+    customPrompts: CustomPrompts;
+    onCustomPromptsChange: (prompts: CustomPrompts) => void;
 }
 
 export const Settings: FC<SettingsProps> = ({
@@ -76,7 +81,9 @@ export const Settings: FC<SettingsProps> = ({
     connectionProfiles,
     activeConnectionId,
     onConnectionProfilesChange,
-    onActiveConnectionChange
+    onActiveConnectionChange,
+    customPrompts,
+    onCustomPromptsChange
 }) => {
     // Initialize active_preset if missing
     useEffect(() => {
@@ -85,12 +92,24 @@ export const Settings: FC<SettingsProps> = ({
         }
     }, [settings.active_preset]);
 
-    const [activeTab, setActiveTab] = useState<'connection' | 'presets' | 'data'>('connection');
+    const [activeTab, setActiveTab] = useState<'connection' | 'presets' | 'prompts' | 'data'>('connection');
     const [connectionProfileName, setConnectionProfileName] = useState('');
     const [presetProfileName, setPresetProfileName] = useState('');
 
+    const [localPrompts, setLocalPrompts] = useState<CustomPrompts>(customPrompts);
+
+    useEffect(() => {
+        setLocalPrompts(customPrompts);
+    }, [customPrompts]);
+
+    const hasUnsavedPrompts = PROMPT_CONFIGS.some(config => localPrompts[config.id] !== customPrompts[config.id]);
+
     const handlePresetChange = (newPreset: Preset) => {
-        onChange({ ...settings, active_preset: newPreset });
+        onChange({ 
+            ...settings, 
+            active_preset: newPreset,
+            tokenizer: newPreset.tokenizer || settings.tokenizer
+        });
     };
 
     return (
@@ -111,6 +130,12 @@ export const Settings: FC<SettingsProps> = ({
                         onClick={() => setActiveTab('presets')}
                     >
                         🎛️ Presets & Instruct
+                    </button>
+                    <button
+                        className={`tab ${activeTab === 'prompts' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('prompts')}
+                    >
+                        📝 System Prompts
                     </button>
                     <button
                         className={`tab ${activeTab === 'data' ? 'active' : ''}`}
@@ -147,7 +172,8 @@ export const Settings: FC<SettingsProps> = ({
                                                     serverUrl: profile.serverUrl,
                                                     apiKey: profile.apiKey,
                                                     model: profile.model,
-                                                    provider: profile.provider || 'openai'
+                                                    provider: profile.provider || 'openai',
+                                                    tokenizer: profile.tokenizer || 'openai'
                                                 });
                                                 setConnectionProfileName(profile.name);
                                             } else {
@@ -184,7 +210,8 @@ export const Settings: FC<SettingsProps> = ({
                                                                 serverUrl: settings.serverUrl,
                                                                 apiKey: settings.apiKey,
                                                                 model: settings.model,
-                                                                provider: settings.provider || 'openai'
+                                                                provider: settings.provider || 'openai',
+                                                                tokenizer: settings.tokenizer
                                                             }
                                                             : p
                                                     ));
@@ -214,7 +241,8 @@ export const Settings: FC<SettingsProps> = ({
                                                     serverUrl: settings.serverUrl,
                                                     apiKey: settings.apiKey,
                                                     model: settings.model,
-                                                    provider: settings.provider || 'openai'
+                                                    provider: settings.provider || 'openai',
+                                                    tokenizer: settings.tokenizer
                                                 };
                                                 onConnectionProfilesChange([...connectionProfiles, newProfile]);
                                                 onActiveConnectionChange(newProfile.id);
@@ -250,7 +278,11 @@ export const Settings: FC<SettingsProps> = ({
                                             onActivePresetChange(id);
                                             const profile = presetProfiles.find(p => p.id === id);
                                             if (profile) {
-                                                onChange({ ...settings, active_preset: profile.preset });
+                                                onChange({ 
+                                                    ...settings, 
+                                                    active_preset: profile.preset,
+                                                    tokenizer: profile.preset.tokenizer || settings.tokenizer
+                                                });
                                                 setPresetProfileName(profile.name);
                                             } else {
                                                 setPresetProfileName('');
@@ -280,7 +312,14 @@ export const Settings: FC<SettingsProps> = ({
                                                 onClick={() => {
                                                     onPresetProfilesChange(presetProfiles.map(p =>
                                                         p.id === activePresetId
-                                                            ? { ...p, name: presetProfileName.trim(), preset: settings.active_preset! }
+                                                            ? { 
+                                                                ...p, 
+                                                                name: presetProfileName.trim(), 
+                                                                preset: {
+                                                                    ...settings.active_preset!,
+                                                                    tokenizer: settings.tokenizer as any
+                                                                }
+                                                            }
                                                             : p
                                                     ));
                                                 }}
@@ -306,7 +345,10 @@ export const Settings: FC<SettingsProps> = ({
                                                 const newProfile: PresetProfile = {
                                                     id: Date.now().toString(),
                                                     name: presetProfileName.trim(),
-                                                    preset: settings.active_preset!
+                                                    preset: {
+                                                        ...settings.active_preset!,
+                                                        tokenizer: settings.tokenizer as any
+                                                    }
                                                 };
                                                 onPresetProfilesChange([...presetProfiles, newProfile]);
                                                 onActivePresetChange(newProfile.id);
@@ -382,6 +424,113 @@ export const Settings: FC<SettingsProps> = ({
                                 <PresetEditor preset={settings.active_preset} onChange={handlePresetChange} />
                             </div>
                         </div>
+                    </div>
+                )}
+
+                {activeTab === 'prompts' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+                        <div className="card">
+                            <div className="card-header">
+                                <div className="card-title">
+                                    <span>System Prompt Templates</span>
+                                </div>
+                                <div className="field-actions" style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+                                    <button
+                                        className="btn btn-primary btn-sm"
+                                        disabled={!hasUnsavedPrompts}
+                                        onClick={() => {
+                                            onCustomPromptsChange(localPrompts);
+                                        }}
+                                    >
+                                        💾 Save Changes
+                                    </button>
+                                    <button
+                                        className="btn btn-danger btn-sm"
+                                        onClick={() => {
+                                            if (confirm('Reset all prompts to defaults? Your custom edits will be lost.')) {
+                                                const defaults = getDefaultPrompts();
+                                                setLocalPrompts(defaults);
+                                                onCustomPromptsChange(defaults);
+                                            }
+                                        }}
+                                    >
+                                        Reset All to Defaults
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="card-body">
+                                <p className="text-muted" style={{ marginBottom: 'var(--space-md)' }}>
+                                    These are the internal system prompts sent to the AI for each page.
+                                    Your preset content (jailbreaks, style rules) is always prepended automatically — do NOT duplicate it here.
+                                    Use {'{{variableName}}'} placeholders for dynamic values.
+                                </p>
+                            </div>
+                        </div>
+
+                        {PROMPT_CONFIGS.map(config => {
+                            const isModified = localPrompts[config.id] !== config.defaultTemplate;
+                            const isUnsaved = localPrompts[config.id] !== customPrompts[config.id];
+                            return (
+                                <div className="card" key={config.id}>
+                                    <div className="card-header">
+                                        <div className="card-title">
+                                            <span>{config.name}</span>
+                                            {isUnsaved && <span className="badge badge-warning" style={{ marginLeft: 'var(--space-sm)', backgroundColor: '#e6a23c', color: '#fff' }}>unsaved</span>}
+                                            {isModified && !isUnsaved && <span className="badge badge-primary" style={{ marginLeft: 'var(--space-sm)' }}>modified</span>}
+                                        </div>
+                                        <div className="field-actions">
+                                            {isModified && (
+                                                <button
+                                                    className="btn btn-secondary btn-sm"
+                                                    onClick={() => {
+                                                        const newPrompts = {
+                                                            ...localPrompts,
+                                                            [config.id]: config.defaultTemplate,
+                                                        };
+                                                        setLocalPrompts(newPrompts);
+                                                        onCustomPromptsChange(newPrompts);
+                                                    }}
+                                                >
+                                                    Reset
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+                                        <p className="text-muted" style={{ margin: 0, fontSize: '0.85em' }}>
+                                            {config.description}
+                                        </p>
+                                        {config.variables.length > 0 && (
+                                            <div className="text-muted" style={{ fontSize: '0.8em', fontFamily: 'var(--font-mono)' }}>
+                                                Variables: {config.variables.map(v => (
+                                                    <span key={v.name} title={v.description} style={{ marginRight: '8px', color: 'var(--accent)', cursor: 'help' }}>
+                                                        {`{{${v.name}}}`}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                        <textarea
+                                            className="input"
+                                            style={{
+                                                width: '100%',
+                                                minHeight: '200px',
+                                                fontFamily: 'var(--font-mono)',
+                                                fontSize: '0.85em',
+                                                resize: 'vertical',
+                                                whiteSpace: 'pre-wrap',
+                                            }}
+                                            value={localPrompts[config.id] || ''}
+                                            onChange={(e) => {
+                                                setLocalPrompts({
+                                                    ...localPrompts,
+                                                    [config.id]: e.target.value,
+                                                });
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
 

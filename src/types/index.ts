@@ -1,3 +1,5 @@
+// ... (previous imports)
+
 export interface CharacterData {
     name: string;
     description: string;
@@ -47,14 +49,17 @@ export interface KBFile {
     tokens?: number;
     originalContent?: string;
     cleanMode?: 'strip' | 'summary' | 'heavy_summary' | 'rejected';
+    type?: 'text' | 'pdf' | 'json'; // Added type for agent compatibility
 }
 
 export interface ChatMessage {
     id: string;
-    role: 'user' | 'assistant';
+    role: 'user' | 'assistant' | 'system'; // Added 'system' role
     content: string;
     timestamp: number;
     error?: boolean; // To mark failed generations
+    thoughts?: any[]; // Agent thoughts (AgentThought[]) - kept as any to avoid circular deps with services/agent
+    toolCalls?: any[]; // Agent tool calls (ToolCall[])
 }
 
 export interface ChatSession {
@@ -64,6 +69,8 @@ export interface ChatSession {
     createdAt: number;
     pageId?: PageId; // Optional for backward compatibility, defaults to 'character' or global
 }
+
+// ... (rest of file)
 
 export interface PromptItem {
     name: string;
@@ -92,8 +99,11 @@ export interface Preset {
     openai_max_context: number;
     openai_max_tokens: number;
 
+    // Tokenizer
+    tokenizer?: 'gemma' | 'openai' | 'claude';
+
     // Gemini Thinking
-    thinking_mode?: 'off' | 'auto' | 'max';
+    thinking_mode?: 'off' | 'auto' | 'minimal' | 'low' | 'medium' | 'high' | 'max';
     thinking_budget?: number;
 
     // Formatting Strings
@@ -122,11 +132,10 @@ export interface APISettings {
     active_preset?: Preset; // Currently active preset
     provider: 'openai' | 'gemini';
     tokenizer?: 'gemma' | 'openai' | 'claude';
+    stream?: boolean;
 }
 
 export type PageId = 'character' | 'autonomous' | 'lorebook' | 'cleaner' | 'settings' | 'file_manager' | 'history' | 'arts' | 'scraper';
-
-// ... (existing profiles)
 
 export interface CharacterHistoryEntry {
     id: string;
@@ -170,6 +179,7 @@ export interface ConnectionProfile {
     apiKey: string;
     model: string;
     provider: 'openai' | 'gemini';
+    tokenizer?: 'gemma' | 'openai' | 'claude';
 }
 
 export interface AppState {
@@ -187,4 +197,5 @@ export interface AppState {
     lorebookHistory: LorebookHistoryEntry[];
     history?: HistoryEntry[]; // Legacy, for backward compatibility
     wikiUrl?: string; // Persisted wiki URL
+    customPrompts?: Record<string, string>; // User-edited system prompt templates (keyed by prompt ID)
 }

@@ -101,6 +101,14 @@ export const ArtsManager = ({ character, prompts, onUpdatePrompts, onSelectChara
                         <button className="btn btn-secondary" onClick={handleAddPrompt}>
                             + Add
                         </button>
+                        <button 
+                            className="btn btn-ghost text-danger" 
+                            onClick={() => {
+                                if (confirm('Clear all generated prompts?')) onUpdatePrompts([]);
+                            }}
+                        >
+                            🗑️ Clear All
+                        </button>
                     </div>
                 </div>
             </div>

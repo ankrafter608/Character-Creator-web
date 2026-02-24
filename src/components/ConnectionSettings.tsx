@@ -105,6 +105,21 @@ export const ConnectionSettings: FC<ConnectionSettingsProps> = ({ settings, onCh
                 </div>
 
                 <div className="input-group">
+                    <label className="input-label" style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                        <input
+                            type="checkbox"
+                            style={{ marginRight: '8px' }}
+                            checked={settings.stream ?? true}
+                            onChange={(e) => onChange({ ...settings, stream: e.target.checked })}
+                        />
+                        Enable Streaming
+                    </label>
+                    <div className="input-hint">
+                        If enabled, responses will be streamed token by token. Disable if your proxy/server has issues with streaming.
+                    </div>
+                </div>
+
+                <div className="input-group">
                     <label className="input-label">Tokenizer</label>
                     <select
                         className="input"

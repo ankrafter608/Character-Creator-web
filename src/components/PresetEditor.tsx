@@ -130,12 +130,17 @@ export const PresetEditor: FC<PresetEditorProps> = ({ preset, onChange }) => {
                             >
                                 <option value="off">Off</option>
                                 <option value="auto">Auto</option>
-                                <option value="max">Max</option>
+                                <option value="minimal">Minimal (128)</option>
+                                <option value="low">Low (1k)</option>
+                                <option value="medium">Medium (4k)</option>
+                                <option value="high">High (16k)</option>
+                                <option value="max">Max (Custom)</option>
                             </select>
                         </div>
                         {preset.thinking_mode === 'max' && (
                             <div className="input-group">
                                 <label className="input-label">Thinking Budget (Tokens)</label>
+
                                 <input
                                     type="number"
                                     className="input"

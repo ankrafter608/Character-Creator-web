@@ -79,7 +79,7 @@ export async function searchWiki(apiUrl: string, query: string): Promise<SearchR
         action: 'query',
         list: 'search',
         srsearch: query,
-        srlimit: '20',
+        srlimit: '50',
         format: 'json',
         origin: '*',
     });
@@ -378,8 +378,8 @@ export const WikiScraper: FC<WikiScraperProps> = ({ onFilesAdd, wikiUrl, onWikiU
                                     </button>
                                 )}
                                 {queue.length > 0 && (
-                                    <button className="btn btn-ghost btn-sm" onClick={clearQueue} disabled={downloading}>
-                                        🗑️
+                                    <button className="btn btn-ghost text-danger btn-sm" onClick={clearQueue} disabled={downloading}>
+                                        🗑️ Clear All
                                     </button>
                                 )}
                             </div>

@@ -181,7 +181,7 @@ export const LorebookEditor: FC<LorebookEditorProps> = ({ lorebook, onChange, on
                                     <input
                                         type="text"
                                         className="input"
-                                        value={activeEntry.keys.join(', ')}
+                                        value={activeEntry.keys?.join(', ') || ''}
                                         onChange={(e) => handleEntryChange('keys', e.target.value.split(',').map(k => k.trim()).filter(k => k))}
                                         placeholder="keyword1, keyword2, keyword3"
                                     />
@@ -192,7 +192,7 @@ export const LorebookEditor: FC<LorebookEditorProps> = ({ lorebook, onChange, on
                                     <input
                                         type="text"
                                         className="input"
-                                        value={activeEntry.secondary_keys.join(', ')}
+                                        value={activeEntry.secondary_keys?.join(', ') || ''}
                                         onChange={(e) => handleEntryChange('secondary_keys', e.target.value.split(',').map(k => k.trim()).filter(k => k))}
                                         placeholder="filter1, filter2"
                                     />
@@ -280,6 +280,16 @@ export const LorebookEditor: FC<LorebookEditorProps> = ({ lorebook, onChange, on
                 paddingTop: 'var(--space-lg)',
                 borderTop: '1px solid var(--border-subtle)'
             }}>
+                <div style={{ marginRight: 'auto' }}>
+                    <button className="btn btn-ghost text-danger" onClick={() => {
+                        if(confirm('Delete ALL entries? This cannot be undone.')) {
+                            onChange({ ...lorebook, entries: [] });
+                            setActiveEntryId(null);
+                        }
+                    }}>
+                        🗑️ Clear All
+                    </button>
+                </div>
                 <input
                     type="file"
                     id="lorebook-import"

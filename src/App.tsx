@@ -15,7 +15,10 @@ import { HistoryViewer } from './components/HistoryViewer';
 import { ArtsManager } from './components/ArtsManager';
 import { saveState, loadState } from './utils/storage';
 import { generateCompletion } from './services/api';
+import { countTokens } from './utils/tokenCounter';
+import { getDefaultPrompts, fillTemplate } from './utils/systemPrompts';
 import type { PageId, CharacterData, LorebookData, ChatMessage, APISettings, KBFile, ChatSession, PresetProfile, ConnectionProfile, CharacterHistoryEntry, LorebookHistoryEntry, ArtPrompt } from './types';
+import type { CustomPrompts } from './utils/systemPrompts';
 
 const defaultCharacter: CharacterData = {
   name: '',
@@ -42,6 +45,7 @@ const defaultSettings: APISettings = {
   apiKey: '',
   model: 'gpt-3.5-turbo',
   provider: 'openai',
+  stream: true,
 };
 
 
@@ -54,7 +58,6 @@ function App() {
   const [character, setCharacter] = useState<CharacterData>(savedState?.character || defaultCharacter);
   const [lorebook, setLorebook] = useState<LorebookData>(savedState?.lorebook || defaultLorebook);
   const [settings, setSettings] = useState<APISettings>(defaultSettings);
-  const [chatMessages] = useState<ChatMessage[]>([]);
   const [kbFiles, setKbFiles] = useState<KBFile[]>(savedState?.kbFiles || []);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>(savedState?.chatSessions || []);
   const [activeChatId, setActiveChatId] = useState<string | null>(savedState?.activeChatId || null);
@@ -75,6 +78,25 @@ function App() {
   const [activeConnectionId, setActiveConnectionId] = useState<string | null>(savedState?.activeConnectionId || null);
   const [characterHistory, setCharacterHistory] = useState<CharacterHistoryEntry[]>(savedState?.characterHistory || []);
   const [lorebookHistory, setLorebookHistory] = useState<LorebookHistoryEntry[]>(savedState?.lorebookHistory || []);
+  const [customPrompts, setCustomPrompts] = useState<CustomPrompts>(() => ({
+    ...getDefaultPrompts(),
+    ...(savedState?.customPrompts || {})
+  }));
+
+  // Fix missing IDs in lorebook entries (migration for existing bad data)
+  useEffect(() => {
+      const hasMissingIds = lorebook.entries.some(e => !e.id);
+      if (hasMissingIds) {
+          console.log("Fixing missing lorebook IDs...");
+          setLorebook(prev => ({
+              ...prev,
+              entries: prev.entries.map(e => e.id ? e : {
+                  ...e,
+                  id: `fixed_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+              })
+          }));
+      }
+  }, [lorebook.entries]); // Dependency on entries array ensures we catch new bad additions too
 
   // Save state to localStorage whenever it changes
   useEffect(() => {
@@ -91,8 +113,9 @@ function App() {
       activeConnectionId,
       characterHistory,
       lorebookHistory,
+      customPrompts,
     });
-  }, [character, lorebook, kbFiles, chatSessions, activeChatId, currentPage, presetProfiles, activePresetId, connectionProfiles, activeConnectionId, characterHistory, lorebookHistory]);
+  }, [character, lorebook, kbFiles, chatSessions, activeChatId, currentPage, presetProfiles, activePresetId, connectionProfiles, activeConnectionId, characterHistory, lorebookHistory, customPrompts]);
 
 
   // Character History Management
@@ -141,7 +164,8 @@ function App() {
           serverUrl: savedConnection.serverUrl,
           apiKey: savedConnection.apiKey,
           model: savedConnection.model,
-          provider: savedConnection.provider || 'openai'
+          provider: savedConnection.provider || 'openai',
+          tokenizer: savedConnection.tokenizer || 'openai'
         };
         needsUpdate = true;
       }
@@ -153,7 +177,9 @@ function App() {
       if (savedPreset) {
         newSettings = {
           ...newSettings,
-          active_preset: savedPreset.preset
+          active_preset: savedPreset.preset,
+          // Tokenizer is now part of connection profile, but we keep this as fallback/override if present in preset legacy
+          // tokenizer: savedPreset.preset.tokenizer || newSettings.tokenizer 
         };
         needsUpdate = true;
       }
@@ -164,6 +190,27 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run only once on mount
+
+  // Reactive Token Recalculation
+  useEffect(() => {
+    if (!settings.tokenizer) return;
+    
+    setKbFiles(prevFiles => {
+        const newFiles = prevFiles.map(f => {
+            const newTokens = countTokens(f.content, settings.tokenizer as any);
+            if (newTokens !== f.tokens) {
+                return { ...f, tokens: newTokens };
+            }
+            return f;
+        });
+        
+        // Return same object if no changes to avoid re-renders
+        if (newFiles.every((f, i) => f === prevFiles[i])) {
+            return prevFiles;
+        }
+        return newFiles;
+    });
+  }, [settings.tokenizer]);
 
   // Auto-select first profile if none is active (fallback for new users)
   useEffect(() => {
@@ -265,62 +312,13 @@ function App() {
           .join('\n\n');
       }
 
-      if (userPromptContent.trim()) {
-        systemPrompt = `${userPromptContent}
+      const templateBody = fillTemplate(customPrompts.character || '', {
+        characterName: character.name || 'New Character',
+      });
 
-Task: Generate or update the character "${character.name || 'New Character'}" based on the chat context.
-
-Output Format: 
-1. The Character JSON object, strictly wrapped in \`\`\`json code blocks.
-2. A conversational response to the user.
-
-\`\`\`json
-{
-  "name": "Character Name",
-  "description": "ALL personality, appearance, backstory, and visual details go here.",
-  "personality": "",
-  "scenario": "Current setting and context",
-  "first_mes": "Engaging opening message",
-  "mes_example": "Dialogue examples",
-  "creator_notes": "Author's summary of the character and greetings (only if user requests it)",
-  "alternate_greetings": ["Alt greeting 1", "Alt greeting 2"]
-}
-\`\`\`
-
-Strict Rules:
-1. ALWAYS include the JSON block in your response.
-2. The "personality" field MUST remain an empty string ("").
-3. "description" must be comprehensive and detailed.
-4. Do NOT output internal thoughts, verification steps, or reasoning headers like "Constructing...", "[Verification]=[Passed]", "Refining...". Output ONLY the JSON and a brief conversational response.
-`;
-      } else {
-        systemPrompt = `You are an expert character creator for roleplay.
-Task: Generate or update the character "${character.name || 'New Character'}" based on the chat context.
-
-Output Format: 
-1. The Character JSON object, strictly wrapped in \`\`\`json code blocks.
-2. A conversational response.
-
-\`\`\`json
-{
-  "name": "Character Name",
-  "description": "ALL personality, appearance, backstory, and visual details go here.",
-  "personality": "",
-  "scenario": "Current setting and context",
-  "first_mes": "Engaging opening message",
-  "mes_example": "Dialogue examples",
-  "creator_notes": "Author's summary of the character and greetings (only if user requests it)",
-  "alternate_greetings": ["Alt greeting 1", "Alt greeting 2"]
-}
-\`\`\`
-
-Strict Rules:
-1. ALWAYS include the JSON block in your response.
-2. The "personality" field MUST remain an empty string ("").
-3. "description" must be comprehensive and detailed.
-4. Do NOT output internal thoughts, verification steps, or reasoning headers like "Constructing...", "[Verification]=[Passed]", "Refining...". Output ONLY the JSON and a brief conversational response.
-`;
-      }
+      systemPrompt = userPromptContent.trim()
+        ? `${userPromptContent}\n\n${templateBody}`
+        : templateBody;
     } else if (currentPage === 'lorebook') {
       // Serialize current lorebook entries for the AI to see
       const currentEntriesJson = lorebook.entries.map(e => ({
@@ -343,150 +341,170 @@ Strict Rules:
           .join('\n\n');
       }
 
-      systemPrompt = `${presetContent ? presetContent + '\n\n' : ''}You are a Lorebook entry creator.
+      const templateBody = fillTemplate(customPrompts.lorebook || '', {
+        lorebookName: lorebook.name,
+        entryCount: String(lorebook.entries.length),
+        entriesJson: JSON.stringify(currentEntriesJson, null, 2),
+      });
 
-Current Lorebook: "${lorebook.name}"
-Existing Entries (${lorebook.entries.length}):
-${JSON.stringify(currentEntriesJson, null, 2)}
-
-When creating entries, return them as a JSON array wrapped in \`\`\`json code blocks with this structure:
-[{ "keys": ["keyword1"], "secondary_keys": [], "content": "lore text", "comment": "Entry Title", "constant": false, "selective": false, "insertion_order": 100, "position": "before_char" }]
-
-Strict Rules:
-1. ALWAYS start with the JSON block.
-2. Follow it with a brief summary of the entries you created.
-3. Do not duplicate existing entries. Do not include IDs.`;
+      systemPrompt = presetContent.trim()
+        ? `${presetContent}\n\n${templateBody}`
+        : templateBody;
     } else if (currentPage === 'scraper') {
       const scraperApiUrl = getApiUrl(wikiUrl);
-      systemPrompt = `You are a wiki research assistant. The user wants to find relevant wiki pages to download for their lorebook/character project.
-
-Current wiki: ${wikiUrl}
-API endpoint: ${scraperApiUrl}
-
-Your job:
-1. Understand what the user needs (characters, lore, world-building, etc.)
-2. Suggest specific page titles to search for on the wiki
-3. Output your suggestions as a JSON block so the app can auto-search them
-
-JSON format (wrap in \`\`\`json code block):
-{"pages": ["Page Title 1", "Page Title 2", "Page Title 3"]}
-
-Rules:
-1. ALWAYS include the JSON block with page title suggestions.
-2. After the JSON, briefly explain what you suggested and why.
-3. Use exact page titles as they would appear on the wiki (e.g. "Emiya Shirou" not "shirou emiya").
-4. Suggest 5-15 pages depending on scope.
-5. Think about what's most useful for a lorebook — characters, locations, abilities, factions, key events.`;
+      systemPrompt = fillTemplate(customPrompts.scraper || '', {
+        wikiUrl,
+        scraperApiUrl,
+      });
     } else {
-      systemPrompt = `You are a helpful assistant for the ${currentPage} page.`;
+      systemPrompt = fillTemplate(customPrompts.generic || '', {
+        pageName: currentPage,
+      });
     }
 
     // Append any enabled file contents to the system prompt
     systemPrompt += filesContext;
 
-    generateCompletion(settings, updatedSession.messages, systemPrompt)
-      .then(response => {
-        setChatSessions(prev => {
-          const currentSession = prev.find(s => s.id === sessionId);
-          if (!currentSession) return prev;
+    const executeCompletion = (currentMessages: ChatMessage[], attempt: number = 0) => {
+      generateCompletion(settings, currentMessages, systemPrompt)
+        .then(response => {
+          setChatSessions(prev => {
+            const currentSession = prev.find(s => s.id === sessionId);
+            if (!currentSession) return prev;
 
-          const aiMsg: ChatMessage = {
-            id: Date.now().toString(),
-            role: 'assistant',
-            content: response.content || (response.error ? `Error: ${response.error}` : "No response"),
-            timestamp: Date.now(),
-            error: !!response.error
-          };
+            const aiMsg: ChatMessage = {
+              id: Date.now().toString(),
+              role: 'assistant',
+              content: response.content || (response.error ? `Error: ${response.error}` : "No response"),
+              timestamp: Date.now(),
+              error: !!response.error
+            };
 
-          return prev.map(s => s.id === sessionId ? {
-            ...s,
-            messages: [...s.messages, aiMsg]
-          } : s);
-        });
-
-        // Auto-update character fields
-        if (currentPage === 'character' && response.content) {
-          import('./utils/characterParser').then(({ parseCharacterResponse }) => {
-            const parsed = parseCharacterResponse(response.content);
-            if (Object.keys(parsed).length > 0) {
-              console.log("Auto-updating character from AI response:", parsed);
-              setCharacter(prev => ({ ...prev, ...parsed }));
-            }
+            return prev.map(s => s.id === sessionId ? {
+              ...s,
+              messages: [...s.messages, aiMsg]
+            } : s);
           });
-        }
 
-        // Auto-update lorebook entries
-        if (currentPage === 'lorebook' && response.content) {
-          import('./utils/characterParser').then(({ parseLorebookResponse }) => {
-            const newEntries = parseLorebookResponse(response.content);
-            if (newEntries.length > 0) {
-              console.log("Auto-adding lorebook entries from AI response:", newEntries);
-              setLorebook(prev => ({
-                ...prev,
-                entries: [...prev.entries, ...newEntries]
-              }));
-            }
-          });
-        }
-
-        // Auto-fetch wiki pages from scraper AI response
-        if (currentPage === 'scraper' && response.content) {
-          const jsonMatch = response.content.match(/```json\s*([\s\S]*?)```/);
-          if (jsonMatch) {
-            try {
-              const parsed = JSON.parse(jsonMatch[1]);
-              const pages: string[] = parsed.pages || [];
-              if (pages.length > 0) {
-                const scraperApiUrl = getApiUrl(wikiUrl);
-                (async () => {
-                  for (const pageTitle of pages) {
-                    try {
-                      // Check if already in queue or files to avoid duplicates
-                      // Note: We can only check queue easily here. Files check is harder without full list scan but valid.
-
-                      const results = await searchWiki(scraperApiUrl, pageTitle);
-                      const exactMatch = results.find(r => r.title.toLowerCase() === pageTitle.toLowerCase()) || results[0];
-
-                      if (exactMatch) {
-                        setWikiQueue(prev => {
-                          if (prev.find(q => q.pageid === exactMatch.pageid)) return prev;
-                          return [...prev, {
-                            pageid: exactMatch.pageid,
-                            title: exactMatch.title,
-                            status: 'pending'
-                          }];
-                        });
-                      }
-                    } catch (e) {
-                      console.error(`Failed to search wiki page: ${pageTitle}`, e);
-                    }
-                  }
-                })();
+          // Auto-update character fields
+          if (currentPage === 'character' && response.content) {
+            import('./utils/characterParser').then(({ parseCharacterResponse }) => {
+              const parsed = parseCharacterResponse(response.content);
+              if (Object.keys(parsed).length > 0) {
+                console.log("Auto-updating character from AI response:", parsed);
+                setCharacter(prev => ({ ...prev, ...parsed }));
               }
-            } catch (e) {
-              console.error('Failed to parse scraper AI response JSON:', e);
+            });
+          }
+
+          // Auto-update lorebook entries
+          if (currentPage === 'lorebook' && response.content) {
+            import('./utils/characterParser').then(({ parseLorebookResponse }) => {
+              const newEntries = parseLorebookResponse(response.content);
+              if (newEntries.length > 0) {
+                console.log("Auto-adding lorebook entries from AI response:", newEntries);
+                setLorebook(prev => ({
+                  ...prev,
+                  entries: [...prev.entries, ...newEntries]
+                }));
+              }
+            });
+          }
+
+          // Auto-fetch wiki pages from scraper AI response
+          if (currentPage === 'scraper' && response.content) {
+            const jsonMatch = response.content.match(/```json\s*([\s\S]*?)```/);
+            if (jsonMatch) {
+              try {
+                const parsed = JSON.parse(jsonMatch[1]);
+                const suggestedWikiUrl = parsed.wikiUrl;
+                
+                let currentWikiUrl = wikiUrl;
+                if (suggestedWikiUrl && suggestedWikiUrl !== wikiUrl) {
+                    currentWikiUrl = suggestedWikiUrl;
+                    setWikiUrl(suggestedWikiUrl); // Update the state so UI reflects the new wiki
+                }
+
+                if (parsed.action === 'search') {
+                  if (attempt < 3) { // Max depth
+                    const scraperApiUrl = getApiUrl(currentWikiUrl);
+                    searchWiki(scraperApiUrl, parsed.query || '').then(results => {
+                      const titles = results.map(r => r.title);
+                      const sysContent = titles.length > 0
+                        ? `Search results for "${parsed.query}":\n${titles.map(t => `- ${t}`).join('\n')}\nPlease output a JSON with action="download" and the exact titles you want to download, or use action="search" with a different query.`
+                        : `No results found for "${parsed.query}". Please try a different search query.`;
+                      
+                      const sysMsg: ChatMessage = {
+                        id: Date.now().toString(),
+                        role: 'system',
+                        content: sysContent,
+                        timestamp: Date.now()
+                      };
+
+                      setChatSessions(prev => prev.map(s => {
+                        if (s.id !== sessionId) return s;
+                        const newMsgs = [...s.messages, sysMsg];
+                        // Trigger next turn
+                        setTimeout(() => executeCompletion(newMsgs, attempt + 1), 100);
+                        return { ...s, messages: newMsgs };
+                      }));
+                    });
+                  }
+                } else {
+                  // Fallback or explicit 'download'
+                  const pages: string[] = parsed.pages || [];
+                  if (pages.length > 0) {
+                    const scraperApiUrl = getApiUrl(currentWikiUrl);
+                    (async () => {
+                      for (const pageTitle of pages) {
+                        try {
+                          const results = await searchWiki(scraperApiUrl, pageTitle);
+                          const exactMatch = results.find(r => r.title.toLowerCase() === pageTitle.toLowerCase()) || results[0];
+
+                          if (exactMatch) {
+                            setWikiQueue(prev => {
+                              if (prev.find(q => q.pageid === exactMatch.pageid)) return prev;
+                              return [...prev, {
+                                pageid: exactMatch.pageid,
+                                title: exactMatch.title,
+                                status: 'pending'
+                              }];
+                            });
+                          }
+                        } catch (e) {
+                          console.error(`Failed to search wiki page: ${pageTitle}`, e);
+                        }
+                      }
+                    })();
+                  }
+                }
+              } catch (e) {
+                console.error('Failed to parse scraper AI response JSON:', e);
+              }
             }
           }
-        }
-      })
-      .catch(err => {
-        console.error("Generation failed", err);
-        setChatSessions(prev => {
-          const currentSession = prev.find(s => s.id === sessionId);
-          if (!currentSession) return prev;
-          const aiMsg: ChatMessage = {
-            id: Date.now().toString(),
-            role: 'assistant',
-            content: `Error: ${err.message}`,
-            timestamp: Date.now(),
-            error: true
-          };
-          return prev.map(s => s.id === sessionId ? {
-            ...s,
-            messages: [...s.messages, aiMsg]
-          } : s);
+        })
+        .catch(err => {
+          console.error("Generation failed", err);
+          setChatSessions(prev => {
+            const currentSession = prev.find(s => s.id === sessionId);
+            if (!currentSession) return prev;
+            const aiMsg: ChatMessage = {
+              id: Date.now().toString(),
+              role: 'assistant',
+              content: `Error: ${err.message}`,
+              timestamp: Date.now(),
+              error: true
+            };
+            return prev.map(s => s.id === sessionId ? {
+              ...s,
+              messages: [...s.messages, aiMsg]
+            } : s);
+          });
         });
-      });
+    };
+
+    executeCompletion(updatedSession.messages);
   };
 
   const handleDeleteChat = (id: string) => {
@@ -541,32 +559,13 @@ Rules:
           .join('\n\n');
       }
 
-      systemPrompt = `${userPromptContent ? userPromptContent + '\n\n' : ''}You are an expert character creator for roleplay.
-Task: Generate or update the character "${character.name || 'New Character'}" based on the chat context.
+      const templateBody = fillTemplate(customPrompts.character || '', {
+        characterName: character.name || 'New Character',
+      });
 
-Output Format: 
-1. The Character JSON object, strictly wrapped in \`\`\`json code blocks.
-2. A conversational response.
-
-\`\`\`json
-{
-  "name": "Character Name",
-  "description": "ALL personality, appearance, backstory, and visual details go here.",
-  "personality": "",
-  "scenario": "Current setting and context",
-  "first_mes": "Engaging opening message",
-  "mes_example": "Dialogue examples",
-  "creator_notes": "Author's summary of the character and greetings (only if user requests it)",
-  "alternate_greetings": ["Alt greeting 1", "Alt greeting 2"]
-}
-\`\`\`
-
-Strict Rules:
-1. ALWAYS include the JSON block in your response.
-2. The "personality" field MUST remain an empty string ("").
-3. "description" must be comprehensive and detailed.
-4. Do NOT output internal thoughts, verification steps, or reasoning headers like "Constructing...", "[Verification]=[Passed]", "Refining...". Output ONLY the JSON and a brief conversational response.
-`;
+      systemPrompt = userPromptContent.trim()
+        ? `${userPromptContent}\n\n${templateBody}`
+        : templateBody;
     } else if (currentPage === 'lorebook') {
       const currentEntriesJson = lorebook.entries.map(e => ({
         keys: e.keys, secondary_keys: e.secondary_keys, content: e.content,
@@ -583,165 +582,183 @@ Strict Rules:
           .join('\n\n');
       }
 
-      systemPrompt = `${presetContent ? presetContent + '\n\n' : ''}You are a Lorebook entry creator.
+      const templateBody = fillTemplate(customPrompts.lorebook || '', {
+        lorebookName: lorebook.name,
+        entryCount: String(lorebook.entries.length),
+        entriesJson: JSON.stringify(currentEntriesJson, null, 2),
+      });
 
-Current Lorebook: "${lorebook.name}"
-Existing Entries (${lorebook.entries.length}):
-${JSON.stringify(currentEntriesJson, null, 2)}
-
-When creating entries, return them as a JSON array wrapped in \`\`\`json code blocks with this structure:
-[{ "keys": ["keyword1"], "secondary_keys": [], "content": "lore text", "comment": "Entry Title", "constant": false, "selective": false, "insertion_order": 100, "position": "before_char" }]
-
-Strict Rules:
-1. ALWAYS start with the JSON block.
-2. Follow it with a brief summary of the entries you created.
-3. Do not duplicate existing entries. Do not include IDs.`;
+      systemPrompt = presetContent.trim()
+        ? `${presetContent}\n\n${templateBody}`
+        : templateBody;
     } else if (currentPage === 'scraper') {
       const scraperApiUrl = getApiUrl(wikiUrl);
-      systemPrompt = `You are a wiki research assistant. The user wants to find relevant wiki pages to download for their lorebook/character project.
-
-Current wiki: ${wikiUrl}
-API endpoint: ${scraperApiUrl}
-
-Your job:
-1. Understand what the user needs (characters, lore, world-building, etc.)
-2. Suggest specific page titles to search for on the wiki
-3. Output your suggestions as a JSON block so the app can auto-search them
-
-JSON format (wrap in \`\`\`json code block):
-{"pages": ["Page Title 1", "Page Title 2", "Page Title 3"]}
-
-Rules:
-1. ALWAYS include the JSON block with page title suggestions.
-2. After the JSON, briefly explain what you suggested and why.
-3. Use exact page titles as they would appear on the wiki (e.g. "Emiya Shirou" not "shirou emiya").
-4. Suggest 5-15 pages depending on scope.
-5. Think about what's most useful for a lorebook — characters, locations, abilities, factions, key events.`;
+      systemPrompt = fillTemplate(customPrompts.scraper || '', {
+        wikiUrl,
+        scraperApiUrl,
+      });
     } else {
-      systemPrompt = `You are a helpful assistant for the ${currentPage} page.`;
+      systemPrompt = fillTemplate(customPrompts.generic || '', {
+        pageName: currentPage,
+      });
     }
 
     // Append any enabled file contents to the system prompt
     systemPrompt += filesContext;
 
-    generateCompletion(settings, sessionAfterDelete.messages, systemPrompt)
-      .then(response => {
-        setChatSessions(prev => {
-          const currentSession = prev.find(s => s.id === sessionId);
-          if (!currentSession) return prev;
+    const executeRegenerateCompletion = (currentMessages: ChatMessage[], attempt: number = 0) => {
+      generateCompletion(settings, currentMessages, systemPrompt)
+        .then(response => {
+          setChatSessions(prev => {
+            const currentSession = prev.find(s => s.id === sessionId);
+            if (!currentSession) return prev;
 
-          const aiMsg: ChatMessage = {
-            id: Date.now().toString(),
-            role: 'assistant',
-            content: response.content || (response.error ? `Error: ${response.error}` : "No response"),
-            timestamp: Date.now(),
-            error: !!response.error
-          };
+            const aiMsg: ChatMessage = {
+              id: Date.now().toString(),
+              role: 'assistant',
+              content: response.content || (response.error ? `Error: ${response.error}` : "No response"),
+              timestamp: Date.now(),
+              error: !!response.error
+            };
 
-          return prev.map(s => s.id === sessionId ? {
-            ...s,
-            messages: [...s.messages, aiMsg]
-          } : s);
-        });
-
-        // Auto-update character fields if response contains structured data
-        if (currentPage === 'character' && response.content) {
-          import('./utils/characterParser').then(({ parseCharacterResponse }) => {
-            const parsed = parseCharacterResponse(response.content);
-            if (Object.keys(parsed).length > 0) {
-              console.log("Auto-updating character from AI response:", parsed);
-              setCharacter(prev => ({ ...prev, ...parsed }));
-            }
+            return prev.map(s => s.id === sessionId ? {
+              ...s,
+              messages: [...s.messages, aiMsg]
+            } : s);
           });
-        }
 
-        // Auto-update lorebook entries
-        if (currentPage === 'lorebook' && response.content) {
-          import('./utils/characterParser').then(({ parseLorebookResponse }) => {
-            const newEntries = parseLorebookResponse(response.content);
-            if (newEntries.length > 0) {
-              console.log("Auto-adding lorebook entries from AI response (regen):", newEntries);
-              setLorebook(prev => ({
-                ...prev,
-                entries: [...prev.entries, ...newEntries]
-              }));
-            }
-          });
-        }
-
-        // Auto-fetch wiki pages from scraper AI response (regen)
-        if (currentPage === 'scraper' && response.content) {
-          const jsonMatch = response.content.match(/```json\s*([\s\S]*?)```/);
-          if (jsonMatch) {
-            try {
-              const parsed = JSON.parse(jsonMatch[1]);
-              const pages: string[] = parsed.pages || [];
-              if (pages.length > 0) {
-                const scraperApiUrl = getApiUrl(wikiUrl);
-                (async () => {
-                  for (const pageTitle of pages) {
-                    try {
-                      const results = await searchWiki(scraperApiUrl, pageTitle);
-                      const exactMatch = results.find(r => r.title.toLowerCase() === pageTitle.toLowerCase()) || results[0];
-
-                      if (exactMatch) {
-                        setWikiQueue(prev => {
-                          if (prev.find(q => q.pageid === exactMatch.pageid)) return prev;
-                          return [...prev, {
-                            pageid: exactMatch.pageid,
-                            title: exactMatch.title,
-                            status: 'pending'
-                          }];
-                        });
-                      }
-                    } catch (e) {
-                      console.error(`Failed to search wiki page: ${pageTitle}`, e);
-                    }
-                  }
-                })();
+          // Auto-update character fields if response contains structured data
+          if (currentPage === 'character' && response.content) {
+            import('./utils/characterParser').then(({ parseCharacterResponse }) => {
+              const parsed = parseCharacterResponse(response.content);
+              if (Object.keys(parsed).length > 0) {
+                console.log("Auto-updating character from AI response:", parsed);
+                setCharacter(prev => ({ ...prev, ...parsed }));
               }
-            } catch (e) {
-              console.error('Failed to parse scraper AI response JSON:', e);
+            });
+          }
+
+          // Auto-update lorebook entries
+          if (currentPage === 'lorebook' && response.content) {
+            import('./utils/characterParser').then(({ parseLorebookResponse }) => {
+              const newEntries = parseLorebookResponse(response.content);
+              if (newEntries.length > 0) {
+                console.log("Auto-adding lorebook entries from AI response (regen):", newEntries);
+                setLorebook(prev => ({
+                  ...prev,
+                  entries: [...prev.entries, ...newEntries]
+                }));
+              }
+            });
+          }
+
+          // Auto-fetch wiki pages from scraper AI response (regen)
+          if (currentPage === 'scraper' && response.content) {
+            const jsonMatch = response.content.match(/```json\s*([\s\S]*?)```/);
+            if (jsonMatch) {
+              try {
+                const parsed = JSON.parse(jsonMatch[1]);
+                const suggestedWikiUrl = parsed.wikiUrl;
+                
+                let currentWikiUrl = wikiUrl;
+                if (suggestedWikiUrl && suggestedWikiUrl !== wikiUrl) {
+                    currentWikiUrl = suggestedWikiUrl;
+                    setWikiUrl(suggestedWikiUrl); // Update the state so UI reflects the new wiki
+                }
+
+                if (parsed.action === 'search') {
+                  if (attempt < 3) { // Max depth
+                    const scraperApiUrl = getApiUrl(currentWikiUrl);
+                    searchWiki(scraperApiUrl, parsed.query || '').then(results => {
+                      const titles = results.map(r => r.title);
+                      const sysContent = titles.length > 0
+                        ? `Search results for "${parsed.query}":\n${titles.map(t => `- ${t}`).join('\n')}\nPlease output a JSON with action="download" and the exact titles you want to download, or use action="search" with a different query.`
+                        : `No results found for "${parsed.query}". Please try a different search query.`;
+                      
+                      const sysMsg: ChatMessage = {
+                        id: Date.now().toString(),
+                        role: 'system',
+                        content: sysContent,
+                        timestamp: Date.now()
+                      };
+
+                      setChatSessions(prev => prev.map(s => {
+                        if (s.id !== sessionId) return s;
+                        const newMsgs = [...s.messages, sysMsg];
+                        // Trigger next turn
+                        setTimeout(() => executeRegenerateCompletion(newMsgs, attempt + 1), 100);
+                        return { ...s, messages: newMsgs };
+                      }));
+                    });
+                  }
+                } else {
+                  // Fallback or explicit 'download'
+                  const pages: string[] = parsed.pages || [];
+                  if (pages.length > 0) {
+                    const scraperApiUrl = getApiUrl(currentWikiUrl);
+                    (async () => {
+                      for (const pageTitle of pages) {
+                        try {
+                          const results = await searchWiki(scraperApiUrl, pageTitle);
+                          const exactMatch = results.find(r => r.title.toLowerCase() === pageTitle.toLowerCase()) || results[0];
+
+                          if (exactMatch) {
+                            setWikiQueue(prev => {
+                              if (prev.find(q => q.pageid === exactMatch.pageid)) return prev;
+                              return [...prev, {
+                                pageid: exactMatch.pageid,
+                                title: exactMatch.title,
+                                status: 'pending'
+                              }];
+                            });
+                          }
+                        } catch (e) {
+                          console.error(`Failed to search wiki page: ${pageTitle}`, e);
+                        }
+                      }
+                    })();
+                  }
+                }
+              } catch (e) {
+                console.error('Failed to parse scraper AI response JSON:', e);
+              }
             }
           }
-        }
-      })
-      .catch(err => {
-        console.error("Regeneration failed", err);
-        setChatSessions(prev => {
-          const currentSession = prev.find(s => s.id === sessionId);
-          if (!currentSession) return prev;
-          const aiMsg: ChatMessage = {
-            id: Date.now().toString(),
-            role: 'assistant',
-            content: `Error: ${err.message}`,
-            timestamp: Date.now(),
-            error: true
-          };
-          return prev.map(s => s.id === sessionId ? {
-            ...s,
-            messages: [...s.messages, aiMsg]
-          } : s);
+        })
+        .catch(err => {
+          console.error("Regeneration failed", err);
+          setChatSessions(prev => {
+            const currentSession = prev.find(s => s.id === sessionId);
+            if (!currentSession) return prev;
+            const aiMsg: ChatMessage = {
+              id: Date.now().toString(),
+              role: 'assistant',
+              content: `Error: ${err.message}`,
+              timestamp: Date.now(),
+              error: true
+            };
+            return prev.map(s => s.id === sessionId ? {
+              ...s,
+              messages: [...s.messages, aiMsg]
+            } : s);
+          });
         });
-      });
+    };
+
+    executeRegenerateCompletion(sessionAfterDelete.messages);
   };
 
   const handleGenerateArts = async (aspectRatio: string) => {
     setIsGeneratingArts(true);
     try {
       const targetChar = artsCharacter || character;
-      // Construct system prompt with preset injection if available
-      let systemPrompt = "You are an expert AI Art Prompt Engineer.";
-
       // Inject preset prompts if available to respect jailbreaks/style
+      let presetInstructions = '';
       if (settings.active_preset && settings.active_preset.prompts) {
-        const presetInstructions = settings.active_preset.prompts
+        presetInstructions = settings.active_preset.prompts
           .filter(p => p.enabled)
           .map(p => p.content)
           .join('\n\n');
-        if (presetInstructions) {
-          systemPrompt += "\n\n" + presetInstructions;
-        }
       }
 
       const greetings = [targetChar.first_mes, ...(targetChar.alternate_greetings || [])].filter(Boolean);
@@ -753,34 +770,16 @@ Rules:
         greetingInstructions += `\n${index + 2}. ${label}: Visualize the scene described in this dialogue: "${snippet}"`;
       });
 
-      const prompt = `${systemPrompt}
+      const templateBody = fillTemplate(customPrompts.art || '', {
+        characterName: targetChar.name,
+        characterDescription: targetChar.description,
+        aspectRatio,
+        greetingInstructions,
+      });
 
-Role: Analyze the character "${targetChar.name}" and generate a structured set of image prompts for ComfyUI / Stable Diffusion.
-
-Character Description:
-${targetChar.description}
-
-Target Resolution/Aspect Ratio: ${aspectRatio}
-
-Requests:
-1. General: A high-quality portrait or full-body shot capturing the character's essence.
-${greetingInstructions}
-
-Output Format: A JSON array with the following structure:
-[
-  {
-    "label": "General / Greeting 1 / Greeting 2",
-    "prompt": "positive prompt content (booru tags, high quality, master piece, 1girl/1boy, detailed...)",
-    "model": "anime"
-  }
-]
-
-Requirements:
-- **General**: Create a generic, high-quality prompt for the character.
-- **Greetings**: For each greeting request, create a prompt that specifically visualizes the action, pose, or environment implied by that dialogue line.
-- Use standard Danbooru tags for anime models.
-- Do NOT include negative prompts.
-- Return ONLY the JSON array wrapped in \`\`\`json code blocks.`;
+      const prompt = presetInstructions.trim()
+        ? `${presetInstructions}\n\n${templateBody}`
+        : templateBody;
 
       const response = await generateCompletion(settings, [{ role: 'user', content: prompt, id: Date.now().toString(), timestamp: Date.now() }], prompt);
 
@@ -818,7 +817,33 @@ Requirements:
     }, 1000);
   };
 
-  // Removed renderPage function as per new structure
+  const handleUpdateMessages = (newMessages: ChatMessage[]) => {
+    if (!activeChatId) {
+        // Create new session if none exists (Auto-create for Autonomous Mode)
+        const newSession: ChatSession = {
+            id: Date.now().toString(),
+            name: `Auto Task ${new Date().toLocaleTimeString()}`,
+            messages: newMessages,
+            createdAt: Date.now(),
+            pageId: currentPage
+        };
+        setChatSessions(prev => [...prev, newSession]);
+        setActiveChatId(newSession.id);
+        return;
+    }
+    
+    setChatSessions(prev => prev.map(s => {
+      if (s.id !== activeChatId) return s;
+      return {
+        ...s,
+        messages: newMessages
+      };
+    }));
+  };
+
+  // Get active session messages for Autonomous Mode
+  const activeSession = chatSessions.find(s => s.id === activeChatId);
+  const activeMessages = activeSession ? activeSession.messages : [];
 
   return (
     <div className="app-layout">
@@ -859,9 +884,37 @@ Requirements:
         )}
         {currentPage === 'autonomous' && (
           <AutonomousMode
-            messages={chatMessages}
+            messages={activeMessages}
+            character={character}
+            lorebook={lorebook}
             onSendMessage={() => { }}
             isGenerating={false}
+            settings={settings}
+            wikiUrl={wikiUrl}
+            kbFiles={kbFiles}
+            onAddKbFile={(file) => setKbFiles(prev => [...prev, file])}
+            onUpdateKbFile={(file) => setKbFiles(prev => prev.map(f => f.id === file.id ? file : f))}
+            onUpdateCharacter={(data) => setCharacter(prev => ({ ...prev, ...data }))}
+            onAddLorebookEntry={(entry) => {
+              console.log("App: Adding lorebook entry", entry);
+              setLorebook(prev => ({  
+                ...prev, 
+                entries: [...prev.entries, {
+                  id: `entry_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                  keys: [],
+                  secondary_keys: [],
+                  content: '',
+                  comment: 'New Entry',
+                  enabled: true,
+                  constant: false,
+                  selective: false,
+                  insertion_order: 100,
+                  position: 'before_char',
+                  ...entry
+                }] 
+              }));
+            }}
+            onUpdateMessages={handleUpdateMessages}
           />
         )}
         {currentPage === 'lorebook' && (
@@ -878,6 +931,7 @@ Requirements:
           <FileManager
             files={kbFiles}
             onFilesChange={setKbFiles}
+            tokenizer={settings.tokenizer}
           />
         )}
         {currentPage === 'cleaner' && (
@@ -908,22 +962,26 @@ Requirements:
             activeConnectionId={activeConnectionId}
             onConnectionProfilesChange={setConnectionProfiles}
             onActiveConnectionChange={setActiveConnectionId}
+            customPrompts={customPrompts}
+            onCustomPromptsChange={setCustomPrompts}
           />
         )}
       </main>
-      <ChatSidebar
-        isOpen={isChatOpen}
-        onToggle={() => setIsChatOpen(!isChatOpen)}
-        sessions={currentPageSessions}
-        activeSessionId={activeChatId}
-        onNewSession={handleNewChat}
-        onSelectSession={setActiveChatId}
-        onDeleteSession={handleDeleteChat}
-        onSendMessage={handleSendMessage}
-        onDeleteMessage={handleDeleteMessage}
-        onRegenerate={handleRegenerate}
-        onContinue={handleContinue}
-      />
+      {['character', 'lorebook', 'arts', 'scraper'].includes(currentPage) && (
+        <ChatSidebar
+          isOpen={isChatOpen}
+          onToggle={() => setIsChatOpen(!isChatOpen)}
+          sessions={currentPageSessions}
+          activeSessionId={activeChatId}
+          onNewSession={handleNewChat}
+          onSelectSession={setActiveChatId}
+          onDeleteSession={handleDeleteChat}
+          onSendMessage={handleSendMessage}
+          onDeleteMessage={handleDeleteMessage}
+          onRegenerate={handleRegenerate}
+          onContinue={handleContinue}
+        />
+      )}
 
       {/* Libraries */}
       <CharacterLibrary

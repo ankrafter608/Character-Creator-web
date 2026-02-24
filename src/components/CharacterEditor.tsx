@@ -263,7 +263,7 @@ export const CharacterEditor: FC<CharacterEditorProps> = ({ character, onChange,
             }}>
                 <div style={{ marginRight: 'auto' }}>
                     <button className="btn btn-ghost text-danger" onClick={handleNewCharacter}>
-                        🗑️ New Character
+                        🗑️ Clear All
                     </button>
                 </div>
                 <button className="btn btn-secondary" onClick={onOpenLibrary}>Load Character</button>

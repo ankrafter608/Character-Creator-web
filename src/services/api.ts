@@ -5,12 +5,24 @@ interface GenerationResponse {
     error?: string;
 }
 
+// Add interface for overrides
+export interface GenerationOverrides {
+    thinking_mode?: 'off' | 'auto' | 'minimal' | 'low' | 'medium' | 'high' | 'max';
+    thinking_budget?: number;
+    temperature?: number;
+}
+
 export async function generateCompletion(
     settings: APISettings,
     messages: ChatMessage[],
-    systemPrompt?: string
+    systemPrompt?: string,
+    onUpdate?: (content: string) => void,
+    onThought?: (thought: string) => void,
+    overrides?: GenerationOverrides // New parameter
 ): Promise<GenerationResponse> {
     const { active_preset } = settings;
+
+    console.log('[API] generateCompletion called. Provider:', settings.provider, 'Stream:', settings.stream, 'Overrides:', overrides);
 
     if (!active_preset) {
         return { content: '', error: 'No active preset found' };
@@ -18,9 +30,9 @@ export async function generateCompletion(
 
     try {
         if (settings.provider === 'gemini') {
-            return await generateGemini(settings, messages, systemPrompt);
+            return await generateGemini(settings, messages, systemPrompt, onUpdate, onThought, overrides);
         } else {
-            return await generateOpenAI(settings, messages, systemPrompt);
+            return await generateOpenAI(settings, messages, systemPrompt, onUpdate);
         }
     } catch (err: any) {
         console.error('API Error:', err);
@@ -31,11 +43,8 @@ export async function generateCompletion(
 export async function testConnection(settings: APISettings): Promise<{ success: boolean; message: string }> {
     try {
         const testMsg: ChatMessage = { role: 'user', content: 'Hi', id: 'test', timestamp: Date.now() };
-        // We use a temporary preset if none is active, or just rely on the active one. 
-        // If no active preset, we create a dummy one for the test.
         const effectiveSettings = { ...settings };
         if (!effectiveSettings.active_preset) {
-            // Minimal dummy preset for testing
             effectiveSettings.active_preset = {
                 temperature: 0.7,
                 frequency_penalty: 0,
@@ -74,19 +83,19 @@ export async function testConnection(settings: APISettings): Promise<{ success: 
 async function generateOpenAI(
     settings: APISettings,
     messages: ChatMessage[],
-    systemPrompt?: string
+    systemPrompt?: string,
+    onUpdate?: (content: string) => void
 ): Promise<GenerationResponse> {
+    console.log('[API] generateOpenAI called');
     const { serverUrl, apiKey, model, active_preset } = settings;
 
-    // Construct messages including system prompt
     const apiMessages = [];
 
     if (systemPrompt) {
         apiMessages.push({ role: 'system', content: systemPrompt });
     }
 
-    // Add preset prompts if any (simple injection for now, usually managed by caller but we can add here)
-    // For now assuming 'messages' contains history and 'systemPrompt' contains the character definition + scenario
+    const shouldStream = !!onUpdate && (settings.stream ?? true);
 
     messages.forEach(msg => {
         apiMessages.push({
@@ -103,11 +112,9 @@ async function generateOpenAI(
         frequency_penalty: active_preset?.frequency_penalty ?? 0,
         top_p: active_preset?.top_p ?? 0.9,
         max_tokens: active_preset?.openai_max_tokens ?? 256,
-        stream: false
+        stream: shouldStream
     };
 
-    // Ensure URL ends with /chat/completions if not present (unless it's just the base URL)
-    // Common convention: serverUrl is "http://localhost:5000/v1"
     const url = serverUrl.endsWith('/') ? `${serverUrl}chat/completions` : `${serverUrl}/chat/completions`;
 
     const response = await fetch(url, {
@@ -124,61 +131,72 @@ async function generateOpenAI(
         throw new Error(`OpenAI API Error: ${response.status} ${response.statusText} - ${JSON.stringify(errorData)}`);
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '';
-    return { content };
+    if (shouldStream && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let done = false;
+        let accumulatedContent = '';
+
+        while (!done) {
+            const { value, done: readerDone } = await reader.read();
+            done = readerDone;
+            if (value) {
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split('\n');
+                
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const dataStr = line.slice(6);
+                        if (dataStr === '[DONE]') continue;
+                        try {
+                            const data = JSON.parse(dataStr);
+                            const contentDelta = data.choices?.[0]?.delta?.content || '';
+                            if (contentDelta) {
+                                accumulatedContent += contentDelta;
+                                onUpdate(accumulatedContent);
+                            }
+                        } catch (e) {
+                            // Ignore parsing errors
+                        }
+                    }
+                }
+            }
+        }
+        return { content: accumulatedContent };
+    } else {
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content || '';
+        return { content };
+    }
 }
+
 
 async function generateGemini(
     settings: APISettings,
     messages: ChatMessage[],
-    systemPrompt?: string
+    systemPrompt?: string,
+    onUpdate?: (content: string) => void,
+    onThought?: (thought: string) => void,
+    overrides?: GenerationOverrides
 ): Promise<GenerationResponse> {
     const { serverUrl, apiKey, model, active_preset } = settings;
 
-    // Gemini API format: https://ai.google.dev/api/rest/v1/models/generateContent
-    // Endpoint: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}
-
-    // If serverUrl is the standard Gemini one, we construct the full URL
-    // If it's a proxy, we use it as is? 
-    // User instructions said "change url" is possible, so we blindly trust serverUrl if it looks like a full endpoint, 
-    // or we append /models/{model}:generateContent if it looks like a base.
-
-    let baseUrl = serverUrl;
-
-    // Remove trailing slash
-    if (baseUrl.endsWith('/')) {
-        baseUrl = baseUrl.slice(0, -1);
+    let baseUrl = serverUrl.replace(/\/+$/, '');
+    
+    let endpointUrl = baseUrl;
+    if (!baseUrl.includes('/models/')) {
+        endpointUrl = `${baseUrl}/models/${model}`;
     }
 
-    let url = "";
+    const action = onUpdate ? 'streamGenerateContent' : 'generateContent';
+    
+    let url = `${endpointUrl}:${action}?key=${apiKey}`;
 
-    // Check if URL already contains the path components
-    if (baseUrl.endsWith(`/${model}:generateContent`)) {
-        // User provided full strict URL
-        url = baseUrl;
-    } else if (baseUrl.endsWith('/models')) {
-        url = `${baseUrl}/${model}:generateContent`;
-    } else if (baseUrl.includes('/v1beta/models')) {
-        url = `${baseUrl}/${model}:generateContent`;
-    } else if (baseUrl.includes('/v1beta')) {
-        url = `${baseUrl}/models/${model}:generateContent`;
-    } else {
-        // Assume base URL (e.g. http://localhost:8888 or https://generativelanguage.googleapis.com)
-        url = `${baseUrl}/v1beta/models/${model}:generateContent`;
-    }
-
-    // Append API key if not present
-    if (!url.includes('key=')) {
-        const separator = url.includes('?') ? '&' : '?';
-        url = `${url}${separator}key=${apiKey}`;
+    if (onUpdate) {
+        url += '&alt=sse';
     }
 
     const contents: any[] = [];
-
-    // System prompt in Gemini is usually passed as 'system_instruction' or just a first user message?
-    // v1beta supports system_instruction
-
     let systemInstruction = undefined;
     if (systemPrompt) {
         systemInstruction = {
@@ -193,11 +211,11 @@ async function generateGemini(
         });
     });
 
-    const body = {
+    const body: any = {
         contents: contents,
         system_instruction: systemInstruction,
         generationConfig: {
-            temperature: active_preset?.temperature ?? 0.7,
+            temperature: overrides?.temperature ?? active_preset?.temperature ?? 0.7,
             topP: active_preset?.top_p ?? 0.95,
             maxOutputTokens: active_preset?.openai_max_tokens ?? 256,
             presencePenalty: active_preset?.presence_penalty ?? 0,
@@ -205,40 +223,154 @@ async function generateGemini(
         }
     };
 
-    // Thinking Config (Gemini)
-    if (active_preset?.thinking_mode === 'auto' || active_preset?.thinking_mode === 'max') {
+    // Thinking Config Logic
+    // Use override if present, otherwise default to preset
+    const thinkingMode = overrides?.thinking_mode ?? active_preset?.thinking_mode ?? 'auto';
+    
+    if (thinkingMode !== 'off') {
         const thinkingConfig: any = {
             includeThoughts: true
         };
 
-        if (active_preset.thinking_mode === 'max') {
-            // For 'max', we use the max_tokens as the budget, or a high default if not set
-            // If a specific budget is set in preset (optional feature), use it.
-            const maxTokens = active_preset.openai_max_tokens ?? 8192;
-            thinkingConfig.thinkingBudget = active_preset.thinking_budget || maxTokens;
+        if (thinkingMode === 'max') {
+             // For 'max', we use the max_tokens as the budget, or a high default if not set
+            const maxTokens = active_preset?.openai_max_tokens ?? 8192;
+            thinkingConfig.thinkingBudget = active_preset?.thinking_budget || maxTokens;
+        } else if (thinkingMode !== 'auto') {
+             // Budget mapping for minimal, low, medium, high
+             const budgetMap: Record<string, number> = {
+                'minimal': 128,
+                'low': 1024,
+                'medium': 4096,
+                'high': 16384
+            };
+            const budget = budgetMap[thinkingMode];
+            if (budget) {
+                thinkingConfig.thinkingBudget = budget;
+            }
+        }
+        
+        // If overrides has specific budget
+        if (overrides?.thinking_budget) {
+            thinkingConfig.thinkingBudget = overrides.thinking_budget;
         }
 
         // @ts-ignore
         body.generationConfig.thinkingConfig = thinkingConfig;
     }
+    
+    console.log('[Gemini API] Request URL:', url);
+    // console.log('[Gemini API] Request Body:', JSON.stringify(body, null, 2));
 
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-    });
+    if (onUpdate) {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
 
-    if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(`Gemini API Error: ${response.status} ${response.statusText} - ${JSON.stringify(errorData)}`);
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(`Gemini API Error: ${response.status} ${response.statusText} - ${JSON.stringify(errorData)}`);
+        }
+        
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('No response body for streaming');
+        
+        const decoder = new TextDecoder("utf-8");
+        let accumulatedContent = '';
+        let accumulatedThought = '';
+        let buffer = '';
+
+        try {
+            while (true) {
+                const { value, done: readerDone } = await reader.read();
+                if (readerDone) break;
+
+                const chunk = decoder.decode(value, { stream: true });
+                buffer += chunk;
+                
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    const trimmedLine = line.trim();
+                    if (!trimmedLine) continue;
+
+                    if (trimmedLine.startsWith('data:')) {
+                        const dataStr = trimmedLine.slice(5).trim();
+                        if (!dataStr || dataStr === '[DONE]') continue;
+                        
+                        try {
+                            const data = JSON.parse(dataStr);
+                            const candidate = data.candidates?.[0];
+                            if (candidate?.content?.parts) {
+                                candidate.content.parts.forEach((part: any) => {
+                                    // Check for Explicit Thought Part (Google Native)
+                                    if (part.thought === true && part.text) {
+                                        accumulatedThought += part.text;
+                                        if (onThought) onThought(accumulatedThought);
+                                        // Do NOT add to content
+                                    } 
+                                    // Check for "thinking" or "reasoning_content" (Proxy variants)
+                                    else if (!part.thought && (part.reasoning_content || part.thinking)) {
+                                         // Treat as thought, but might need text extraction logic depending on format
+                                         // For now, assume it's just a field we shouldn't show in content
+                                         const thoughtText = part.reasoning_content || part.thinking;
+                                         if (typeof thoughtText === 'string') {
+                                             accumulatedThought += thoughtText;
+                                             if (onThought) onThought(accumulatedThought);
+                                         }
+                                     }
+                                     // Normal Text Part
+                                     else if (part.text) {
+                                         accumulatedContent += part.text;
+                                         onUpdate(accumulatedContent);
+                                     }
+                                });
+                            }
+                        } catch (e) {
+                            // console.warn("Failed to parse Gemini SSE chunk", dataStr);
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('[Gemini API] Stream reading error:', err);
+            if (accumulatedContent) return { content: accumulatedContent };
+            throw err;
+        } finally {
+             reader.releaseLock();
+        }
+        return { content: accumulatedContent };
+
+    } else {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(body)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(`Gemini API Error: ${response.status} ${response.statusText} - ${JSON.stringify(errorData)}`);
+        }
+
+        const data = await response.json();
+        // Parse non-streaming response
+        let content = '';
+        const parts = data.candidates?.[0]?.content?.parts || [];
+        
+        // Filter out thoughts for non-streaming too if needed (though usually we just dump text)
+        // But for consistency, let's filter.
+        parts.forEach((p: any) => {
+             if (!p.thought && p.text) {
+                 content += p.text;
+             }
+        });
+        
+        return { content: content || parts.map((p: any) => p.text).join('') };
     }
-
-    const data = await response.json();
-    // Parse response
-    // Parse response
-    const parts = data.candidates?.[0]?.content?.parts || [];
-    const content = parts.map((p: any) => p.text).filter((t: any) => t).join('\n\n');
-    return { content };
 }
