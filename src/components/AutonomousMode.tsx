@@ -1,9 +1,9 @@
 import { type FC, useState, useEffect, useRef } from 'react';
 import './AutonomousMode.css';
 import { AgentLoop } from '../services/agent/AgentLoop';
-import { computeLineDiff } from '../utils/diffUtils';
 import type { AgentStatus } from '../services/agent/types';
 import type { ChatMessage, APISettings, KBFile, CharacterData, LorebookData, LorebookEntry } from '../types';
+import type { CustomPrompts } from '../utils/systemPrompts';
 
 interface AutonomousModeProps {
     messages: ChatMessage[];
@@ -20,6 +20,7 @@ interface AutonomousModeProps {
     onUpdateCharacter: (data: Partial<CharacterData>) => void;
     onAddLorebookEntry: (entry: Partial<LorebookEntry>) => void;
     onUpdateMessages: (messages: ChatMessage[]) => void;
+    customPrompts: CustomPrompts;
 }
 
 export const AutonomousMode: FC<AutonomousModeProps> = ({ 
@@ -33,9 +34,9 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
     onUpdateKbFile,
     onUpdateCharacter,
     onAddLorebookEntry,
-    onUpdateMessages
+    onUpdateMessages,
+    customPrompts
 }) => {
-    const [agentStatus, setAgentStatus] = useState<AgentStatus>('idle');
     const agentStatusRef = useRef<AgentStatus>('idle'); // Ref to track status synchronously
     
     const updateAgentStatus = (status: AgentStatus) => {
@@ -44,19 +45,13 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
     };
 
     const [inputValue, setInputValue] = useState('');
+    const [agentStatus, setAgentStatus] = useState<AgentStatus>('idle');
+    const [collapsedSteps, setCollapsedSteps] = useState<Record<string, boolean>>({});
+    const [initialCharacter, setInitialCharacter] = useState<CharacterData | null>(null);
+    const [agentMode, setAgentMode] = useState<'build' | 'plan'>('build');
+    
     const agentRef = useRef<AgentLoop | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const [collapsedSteps, setCollapsedSteps] = useState<Record<string, boolean>>({});
-
-    const toggleSteps = (msgId: string) => {
-        setCollapsedSteps(prev => ({
-            ...prev,
-            [msgId]: !prev[msgId]
-        }));
-    };
-
-    // Initial Character State for Diffing
-    const [initialCharacter, setInitialCharacter] = useState<CharacterData | null>(null);
 
     // Set initial character once when component mounts (or when character is first available)
     useEffect(() => {
@@ -64,12 +59,6 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
             setInitialCharacter(JSON.parse(JSON.stringify(character)));
         }
     }, [character]); // Logic ensures it only sets once unless manually reset
-
-    // Compute Diff
-    const characterDiff = initialCharacter ? computeLineDiff(
-        JSON.stringify(initialCharacter, null, 2),
-        JSON.stringify(character, null, 2)
-    ) : [];
 
     // Ref to access latest messages in async callbacks
     const messagesRef = useRef(messages);
@@ -83,23 +72,6 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
         onUpdateMessagesRef.current = onUpdateMessages;
     }, [onUpdateMessages]);
 
-    // Update AgentLoop context whenever dependencies change
-    useEffect(() => {
-        if (agentRef.current) {
-            agentRef.current.updateContext({
-                wikiUrl,
-                kbFiles,
-                character,
-                lorebook,
-                addKbFile: onAddKbFile,
-                updateKbFile: onUpdateKbFile,
-                updateCharacter: onUpdateCharacter,
-                addLorebookEntry: onAddLorebookEntry,
-                settings
-            });
-        }
-    }, [wikiUrl, kbFiles, character, lorebook, onAddKbFile, onUpdateKbFile, onUpdateCharacter, onAddLorebookEntry, settings]);
-
     // Initialize agent loop
     useEffect(() => {
         if (!agentRef.current) {
@@ -111,6 +83,7 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
                     kbFiles,
                     character,
                     lorebook,
+                    agentMode,
                     addKbFile: onAddKbFile,
                     updateKbFile: onUpdateKbFile,
                     updateCharacter: (data: any) => {
@@ -121,7 +94,8 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
                         console.log('[AutonomousMode] addLorebookEntry called via initial context', entry);
                         onAddLorebookEntry(entry);
                     },
-                    settings
+                    settings,
+                    customPrompts
                 },
                 (status) => updateAgentStatus(status),
                 (msg) => {
@@ -158,69 +132,93 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
         }
     }, []); // Run once on mount
 
-    // Update agent context when props change
+    // Update agent loop context whenever dependencies change
     useEffect(() => {
         if (agentRef.current) {
-            console.log('[AutonomousMode] Updating AgentLoop context');
-            (agentRef.current as any).context = {
+            console.log('[AutonomousMode] Updating AgentLoop context', { agentMode });
+            agentRef.current.updateContext({
                 wikiUrl,
                 kbFiles,
                 character,
                 lorebook,
-                addKbFile: (file: any) => {
-                    console.log('[AutonomousMode] addKbFile context wrapper called', file.name);
-                    onAddKbFile(file);
-                },
+                agentMode,
+                addKbFile: onAddKbFile,
                 updateKbFile: onUpdateKbFile,
-                updateCharacter: (data: any) => {
-                    console.log('[AutonomousMode] updateCharacter context wrapper called', data);
-                    onUpdateCharacter(data);
-                },
-                addLorebookEntry: (entry: any) => {
-                    console.log('[AutonomousMode] addLorebookEntry context wrapper called', entry);
-                    onAddLorebookEntry(entry);
-                },
-                settings
-            };
-            (agentRef.current as any).settings = settings;
+                updateCharacter: onUpdateCharacter,
+                addLorebookEntry: onAddLorebookEntry,
+                settings,
+                customPrompts
+            });
         }
-    }, [settings, wikiUrl, kbFiles, character, lorebook, onAddKbFile, onUpdateKbFile, onUpdateCharacter, onAddLorebookEntry]);
+    }, [wikiUrl, kbFiles, character, lorebook, agentMode, onAddKbFile, onUpdateKbFile, onUpdateCharacter, onAddLorebookEntry, settings, customPrompts]);
 
     const handleSend = async () => {
-        if (!inputValue.trim() || agentStatus !== 'idle') return;
-
-        // If starting a new session, reset initial character state to track changes from NOW
-        if (messages.length === 0) {
-            setInitialCharacter(JSON.parse(JSON.stringify(character)));
+        if (agentStatus !== 'idle') {
+            // Stop the agent
+            agentRef.current?.stop();
+            return;
         }
 
-        const userMsg: ChatMessage = {
-            id: Date.now().toString(),
-            role: 'user',
-            content: inputValue,
-            timestamp: Date.now()
-        };
+        const hasText = inputValue.trim().length > 0;
+        const hasHistory = messages.length > 0;
 
-        const newMessages = [...messages, userMsg];
-        onUpdateMessages(newMessages); // Uses the prop directly, which app delegates to closure
-        setInputValue('');
-        
-        // Add a placeholder assistant message for streaming
-        const placeholderAiMsg: ChatMessage = {
-            id: (Date.now() + 1).toString(),
-            role: 'assistant',
-            content: '',
-            timestamp: Date.now(),
-            thoughts: [],
-            toolCalls: []
-        };
-        const messagesWithPlaceholder = [...newMessages, placeholderAiMsg];
-        
-        // CRITICAL FIX: Update ref immediately so the callback sees the placeholder
-        messagesRef.current = messagesWithPlaceholder;
-        onUpdateMessages(messagesWithPlaceholder);
-        
-        await agentRef.current?.start(messagesWithPlaceholder);
+        // Empty input + no history = nothing to do
+        if (!hasText && !hasHistory) return;
+
+        if (hasText) {
+            // Normal send: add user message + run agent
+            if (messages.length === 0) {
+                setInitialCharacter(JSON.parse(JSON.stringify(character)));
+            }
+
+            const userMsg: ChatMessage = {
+                id: Date.now().toString(),
+                role: 'user',
+                content: inputValue,
+                timestamp: Date.now()
+            };
+
+            const newMessages = [...messages, userMsg];
+            onUpdateMessages(newMessages);
+            setInputValue('');
+            
+            const placeholderAiMsg: ChatMessage = {
+                id: (Date.now() + 1).toString(),
+                role: 'assistant',
+                content: '',
+                timestamp: Date.now(),
+                thoughts: [],
+                toolCalls: []
+            };
+            const messagesWithPlaceholder = [...newMessages, placeholderAiMsg];
+            
+            messagesRef.current = messagesWithPlaceholder;
+            onUpdateMessages(messagesWithPlaceholder);
+            
+            await agentRef.current?.start(messagesWithPlaceholder);
+        } else {
+            // Retry: empty input + has history — re-run agent without adding a new user message
+            // Remove the last assistant message if it exists (failed/incomplete response)
+            let baseMessages = [...messages];
+            if (baseMessages.length > 0 && baseMessages[baseMessages.length - 1].role === 'assistant') {
+                baseMessages = baseMessages.slice(0, -1);
+            }
+
+            const placeholderAiMsg: ChatMessage = {
+                id: Date.now().toString(),
+                role: 'assistant',
+                content: '',
+                timestamp: Date.now(),
+                thoughts: [],
+                toolCalls: []
+            };
+            const messagesWithPlaceholder = [...baseMessages, placeholderAiMsg];
+            
+            messagesRef.current = messagesWithPlaceholder;
+            onUpdateMessages(messagesWithPlaceholder);
+            
+            await agentRef.current?.start(messagesWithPlaceholder);
+        }
     };
 
     // Auto-scroll to bottom with better logic
@@ -236,23 +234,17 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
 
     // console.log('[AutonomousMode] Render. Messages:', messages.length, 'Status:', agentStatus);
 
-    const renderDiffViewer = (diff: any[]) => (
-        <div className="code-block" style={{ fontFamily: 'monospace', fontSize: '0.8rem', background: '#1e1e1e', overflowX: 'auto', padding: '10px', height: '100%' }}>
-            {diff.map((line, i) => (
-                <div key={i} style={{
-                    backgroundColor: line.type === 'added' ? 'rgba(0, 255, 0, 0.15)' :
-                        line.type === 'removed' ? 'rgba(255, 0, 0, 0.15)' : 'transparent',
-                    color: line.type === 'removed' ? '#aaa' : '#eee',
-                    display: 'flex',
-                }}>
-                    <span style={{ minWidth: '15px', color: '#666', userSelect: 'none' }}>
-                        {line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}
-                    </span>
-                    <span style={{ whiteSpace: 'pre' }}>{line.content}</span>
-                </div>
-            ))}
-        </div>
-    );
+    const toggleSteps = (msgId: string) => {
+        setCollapsedSteps(prev => ({
+            ...prev,
+            [msgId]: prev[msgId] === undefined ? false : !prev[msgId]
+        }));
+    };
+
+    const handleDeleteMessage = (id: string) => {
+        if (agentStatus !== 'idle') return;
+        onUpdateMessages(messages.filter(m => m.id !== id));
+    };
 
     const renderMessage = (msg: ChatMessage, idx: number) => {
         if (msg.role === 'user') {
@@ -260,7 +252,17 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
                 <div key={msg.id || idx} className="chat-message user" style={{ marginBottom: 'var(--space-md)' }}>
                     <div className="message-avatar user">👤</div>
                     <div className="message-content">
-                        <div className="text-content">{msg.content}</div>
+                        <div className="text-content" style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                        <div className="message-actions" style={{ marginTop: '4px' }}>
+                             <button 
+                                className="msg-action-btn delete" 
+                                onClick={() => handleDeleteMessage(msg.id)}
+                                title="Delete message"
+                                disabled={agentStatus !== 'idle'}
+                            >
+                                🗑️
+                            </button>
+                        </div>
                     </div>
                 </div>
             );
@@ -274,12 +276,20 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
              // Show a placeholder loader
              return (
                 <div key={msg.id || idx} className="agent-message-container" style={{ marginBottom: 'var(--space-xl)', opacity: 0.7 }}>
-                    <div className="agent-header">
+                    <div className="agent-header" style={{ justifyContent: 'space-between', display: 'flex' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <div className="agent-avatar" style={{ fontSize: '1.2rem' }}>🤖</div>
                             <div style={{ fontWeight: 600, color: 'var(--primary)' }}>Agent</div>
                             <span className="agent-status-badge">Thinking...</span>
                         </div>
+                        <button 
+                             className="msg-action-btn delete" 
+                             onClick={() => handleDeleteMessage(msg.id)}
+                             title="Delete message"
+                             disabled={agentStatus !== 'idle'}
+                         >
+                             🗑️
+                         </button>
                     </div>
                 </div>
              );
@@ -317,15 +327,26 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
                             </span>
                         )}
                      </div>
-                     {hasSteps && (
+                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        {hasSteps && (
+                            <button 
+                                className="btn btn-ghost btn-sm" 
+                                style={{ fontSize: '0.8rem', padding: '2px 8px', height: 'auto', opacity: 0.7 }}
+                                onClick={() => toggleSteps(msg.id)}
+                            >
+                                {isCollapsed ? 'Show Steps' : 'Hide Steps'}
+                            </button>
+                        )}
                         <button 
-                            className="btn btn-ghost btn-sm" 
-                            style={{ fontSize: '0.8rem', padding: '2px 8px', height: 'auto', opacity: 0.7 }}
-                            onClick={() => toggleSteps(msg.id)}
-                        >
-                            {isCollapsed ? 'Show Steps' : 'Hide Steps'}
-                        </button>
-                     )}
+                             className="msg-action-btn delete" 
+                             style={{ fontSize: '0.8rem', padding: '2px' }}
+                             onClick={() => handleDeleteMessage(msg.id)}
+                             title="Delete message"
+                             disabled={agentStatus !== 'idle'}
+                         >
+                             🗑️
+                         </button>
+                     </div>
                 </div>
 
                 {/* 2. Chain of Thought (Collapsible) */}
@@ -401,10 +422,10 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
     };
 
     return (
-        <div className="page-content" style={{ height: 'calc(100vh - 60px)', display: 'flex', gap: 'var(--space-md)', overflow: 'hidden' }}>
+        <div className="page-content" style={{ flex: 1, display: 'flex', overflow: 'hidden', padding: 'var(--space-md)' }}>
             
-            {/* Left Panel: Chat */}
-            <div className="chat-container" style={{ flex: 2, display: 'flex', flexDirection: 'column' }}>
+            {/* Chat Panel */}
+            <div className="chat-container" style={{ flex: 1, height: '100%', maxHeight: '100%', display: 'flex', flexDirection: 'column' }}>
                 
                 {/* Header with Actions */}
                 <div style={{ padding: '0 var(--space-md) var(--space-xs)', display: 'flex', justifyContent: 'flex-end' }}>
@@ -437,41 +458,66 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
                 </div>
 
                 {/* Input Area */}
-                <div className="chat-input-area">
-                    <input
-                        type="text"
-                        className="input"
-                        placeholder="Create a character based on Gilgamesh from Fate..."
-                        value={inputValue}
-                        onChange={(e) => setInputValue(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                        disabled={agentStatus !== 'idle'}
-                    />
-                    <button 
-                        className="btn btn-primary" 
-                        onClick={handleSend}
-                        disabled={agentStatus !== 'idle'}
-                    >
-                        {agentStatus === 'idle' ? 'Start' : 'Stop'}
-                    </button>
+                <div className="chat-input-area" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px' }}>
+                    {/* Tool Bar */}
+                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                        <div
+                            className={`agent-mode-toggle${agentMode === 'plan' ? ' active' : ''}${agentStatus !== 'idle' ? ' disabled' : ''}`}
+                            onClick={() => {
+                                if (agentStatus === 'idle') setAgentMode('plan');
+                            }}
+                            title="Plan mode: Brainstorm and discuss without modifying files"
+                        >
+                            📝 Plan
+                        </div>
+                        <div
+                            className={`agent-mode-toggle${agentMode === 'build' ? ' active' : ''}${agentStatus !== 'idle' ? ' disabled' : ''}`}
+                            onClick={() => {
+                                if (agentStatus === 'idle') setAgentMode('build');
+                            }}
+                            title="Build mode: Allow AI to use tools and modify the character/lorebook"
+                        >
+                            ⚙️ Build
+                        </div>
+                    </div>
+
+                    {/* Text Area and Send Button */}
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+                        <textarea
+                            className="input"
+                            style={{ 
+                                flex: 1, 
+                                minHeight: '60px', 
+                                maxHeight: '200px', 
+                                resize: 'vertical',
+                                padding: '12px',
+                                lineHeight: '1.5',
+                                borderRadius: '8px'
+                            }}
+                            placeholder={agentMode === 'plan' ? "Discuss and plan your character..." : "Create a character based on Gilgamesh from Fate..."}
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    handleSend();
+                                }
+                            }}
+                            disabled={agentStatus !== 'idle'}
+                        />
+                        <button 
+                            className="btn btn-primary" 
+                            style={{ height: '48px', padding: '0 24px', borderRadius: '8px', fontSize: '1.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            onClick={handleSend}
+                            title={agentStatus === 'idle' ? (inputValue.trim() ? 'Send' : messages.length > 0 ? 'Retry' : 'Send') : 'Stop'}
+                        >
+                            {agentStatus === 'idle' ? (inputValue.trim() ? '✈️' : messages.length > 0 ? '🔄' : '✈️') : '🛑'}
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            {/* Right Panel: Live Changes */}
-            <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                <div className="card-header">
-                    <h3 className="card-title">📝 Live Changes</h3>
-                </div>
-                <div className="card-body" style={{ flex: 1, overflowY: 'auto', padding: 0 }}>
-                    {initialCharacter ? (
-                        renderDiffViewer(characterDiff)
-                    ) : (
-                        <div className="empty-state">
-                            <div className="empty-state-description">Waiting for changes...</div>
-                        </div>
-                    )}
-                </div>
-            </div>
+            {/* Live Changes panel removed - code kept for future use */}
         </div>
     );
 };

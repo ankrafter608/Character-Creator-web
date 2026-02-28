@@ -82,3 +82,45 @@
 .agent-status-badge {
     animation: pulse 2s infinite;
 }
+
+/* Plan/Build mode toggle */
+.agent-mode-toggle {
+    padding: 4px 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    user-select: none;
+    outline: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.agent-mode-toggle:focus,
+.agent-mode-toggle:focus-visible,
+.agent-mode-toggle:active {
+    outline: none;
+    box-shadow: none;
+}
+
+.agent-mode-toggle.active {
+    border-color: var(--border-focus);
+    color: var(--text-primary);
+}
+
+.agent-mode-toggle.disabled {
+    cursor: not-allowed;
+}
+
+/* Message actions hover behavior */
+.chat-message .message-actions,
+.agent-message-container .msg-action-btn {
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.chat-message:hover .message-actions,
+.agent-message-container:hover .msg-action-btn {
+    opacity: 1;
+}

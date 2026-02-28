@@ -44,7 +44,17 @@ export class ToolManager {
   }
 
   // Generate system prompt section describing available tools
-  getSystemPromptPart(): string {
+  getSystemPromptPart(mode: 'build' | 'plan' = 'build'): string {
+    if (mode === 'plan') {
+        return `
+You are currently in PLAN mode.
+In this mode, you act as a consultant and brainstorming partner.
+You DO NOT have access to tools that modify files or the character sheet.
+Your job is to discuss ideas, outline structures, and help the user figure out what they want BEFORE they switch to BUILD mode.
+Do NOT attempt to use <command> tags in PLAN mode. Just talk to the user naturally.
+`;
+    }
+
     const toolsDesc = Array.from(this.tools.values())
       .map(t => `- ${t.name}: ${t.description}\n  Params: ${JSON.stringify(t.parameters)}`)
       .join('\n\n');
@@ -107,14 +117,14 @@ I need to check the wiki first.
       }
     });
 
-    // 2. Read Wiki Page Tool
+    // 2. Download Wiki Page Tool
     this.register({
-      name: 'read_page',
-      description: 'Download and read the content of a wiki page. This adds the content to the project files (Knowledge Base).',
+      name: 'download_wiki_page',
+      description: 'Download the content of a wiki page to the local Knowledge Base. This is a PREREQUISITE for reading or cleaning the content.',
       parameters: {
         type: 'object',
         properties: {
-          title: { type: 'string', description: 'Exact title of the page to read (from search results)' },
+          title: { type: 'string', description: 'Exact title of the page to download (get this from wiki_search results)' },
           wikiUrl: { type: 'string', description: 'REQUIRED if current wiki URL is not configured or if you need to read from a different fandom.' }
         },
         required: ['title']
@@ -159,14 +169,35 @@ I need to check the wiki first.
                 console.error('[ToolManager] addKbFile context missing!');
             }
 
-            return `Successfully read page "${exactMatch.title}". Content added to Knowledge Base. First 500 chars:\n${content.substring(0, 500)}...`;
+            return `Successfully downloaded page "${exactMatch.title}". Content added to Knowledge Base as "${exactMatch.title}.txt". Tokens: ${Math.floor(content.length / 4)}. YOU MUST CLEAN THIS FILE BEFORE READING IF IT IS LARGE.`;
         } catch (e: any) {
-            return `Failed to read page: ${e.message}`;
+            return `Failed to download page: ${e.message}`;
         }
       }
     });
 
-    // 3. Update Character Tool
+    // 3. Read File Tool (Added to read from KB)
+    this.register({
+        name: 'read_file',
+        description: 'Read the content of a file from the local Knowledge Base. Use list_files to see what is available.',
+        parameters: {
+            type: 'object',
+            properties: {
+                name: { type: 'string', description: 'Exact name of the file to read (e.g. "Gilgamesh.txt")' }
+            },
+            required: ['name']
+        },
+        execute: async ({ name }, context) => {
+            const { kbFiles } = context;
+            if (!kbFiles) return "Error: Knowledge Base is empty.";
+            const file = kbFiles.find((f: any) => f.name === name);
+            if (!file) return `Error: File "${name}" not found in KB.`;
+            
+            return `Content of "${name}":\n\n${file.content}`;
+        }
+    });
+
+    // 4. Update Character Tool
     this.register({
       name: 'update_character',
       description: 'Update the character sheet fields. Use this to save your progress or refine the character based on research.',
@@ -237,12 +268,12 @@ I need to check the wiki first.
     // 6. Clean File Tool
     this.register({
         name: 'clean_file',
-        description: 'Clean or summarize a file to reduce token usage. REQUIRED if a file is over 20k tokens.',
+        description: 'Clean or summarize a text file in the Knowledge Base to reduce token usage. You MUST provide the exact file "name" and choose a "mode" ("strip" or "summary").',
         parameters: {
             type: 'object',
             properties: {
-                name: { type: 'string', description: 'Exact name of the file to clean' },
-                mode: { type: 'string', enum: ['strip', 'summary'], description: 'Use "summary" to compress large text.' }
+                name: { type: 'string', description: 'Exact name of the file to clean (use list_files to see names)' },
+                mode: { type: 'string', enum: ['strip', 'summary'], description: 'Use "summary" to compress large text, or "strip" to just remove formatting garbage.' }
             },
             required: ['name', 'mode']
         },

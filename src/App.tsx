@@ -817,33 +817,11 @@ function App() {
     }, 1000);
   };
 
-  const handleUpdateMessages = (newMessages: ChatMessage[]) => {
-    if (!activeChatId) {
-        // Create new session if none exists (Auto-create for Autonomous Mode)
-        const newSession: ChatSession = {
-            id: Date.now().toString(),
-            name: `Auto Task ${new Date().toLocaleTimeString()}`,
-            messages: newMessages,
-            createdAt: Date.now(),
-            pageId: currentPage
-        };
-        setChatSessions(prev => [...prev, newSession]);
-        setActiveChatId(newSession.id);
-        return;
-    }
-    
-    setChatSessions(prev => prev.map(s => {
-      if (s.id !== activeChatId) return s;
-      return {
-        ...s,
-        messages: newMessages
-      };
-    }));
-  };
-
-  // Get active session messages for Autonomous Mode
-  const activeSession = chatSessions.find(s => s.id === activeChatId);
-  const activeMessages = activeSession ? activeSession.messages : [];
+  // Get active messages specifically for the autonomous mode to keep it running in background
+  const autonomousSessions = chatSessions.filter(s => (s.pageId || 'character') === 'autonomous');
+  const activeAutonomousSessionId = activeChatId && autonomousSessions.some(s => s.id === activeChatId) ? activeChatId : (autonomousSessions.length > 0 ? autonomousSessions[autonomousSessions.length - 1].id : null);
+  const activeAutonomousSession = autonomousSessions.find(s => s.id === activeAutonomousSessionId);
+  const activeAutonomousMessages = activeAutonomousSession ? activeAutonomousSession.messages : [];
 
   return (
     <div className="app-layout">
@@ -882,9 +860,9 @@ function App() {
             isGenerating={isGeneratingArts}
           />
         )}
-        {currentPage === 'autonomous' && (
+        <div style={{ display: currentPage === 'autonomous' ? 'contents' : 'none' }}>
           <AutonomousMode
-            messages={activeMessages}
+            messages={activeAutonomousMessages}
             character={character}
             lorebook={lorebook}
             onSendMessage={() => { }}
@@ -914,9 +892,25 @@ function App() {
                 }] 
               }));
             }}
-            onUpdateMessages={handleUpdateMessages}
+            onUpdateMessages={(messages) => {
+               if (activeAutonomousSessionId) {
+                  setChatSessions(prev => prev.map(s => s.id === activeAutonomousSessionId ? { ...s, messages } : s));
+               } else {
+                 // First message scenario
+                 const newSessionId = Date.now().toString();
+                 setChatSessions(prev => [...prev, {
+                    id: newSessionId,
+                    name: `Autonomous Task ${autonomousSessions.length + 1}`,
+                    messages,
+                    pageId: 'autonomous',
+                    createdAt: Date.now()
+                 }]);
+                 setActiveChatId(newSessionId);
+               }
+            }}
+            customPrompts={customPrompts}
           />
-        )}
+        </div>
         {currentPage === 'lorebook' && (
           <LorebookEditor
             lorebook={lorebook}

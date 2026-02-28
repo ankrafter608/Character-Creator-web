@@ -30,40 +30,37 @@ const modeDescriptions: Record<CleanMode, { icon: string; label: string; descrip
 };
 
 const cleanPrompts: Record<CleanMode, string> = {
-    strip: `You are a text cleaner. Your ONLY job is to remove formatting garbage from the text and return the clean plain text.
+    strip: `You are an expert lore extractor. Your job is to strip away all technical noise and "Wiki garbage" from the provided text, leaving only the clean lore content.
 
-Remove ALL of the following:
+REMOVE ALL OF THE FOLLOWING:
+- Navigation menus, sidebars, and category lists (e.g., "Navigation", "Characters in X series", "Hagun Academy", "Staffs", "Members", "See also").
+- Website metadata, timestamps, headers/footers, and site-specific links.
 - Markdown syntax (headers #, bold **, italic *, links [](), etc.)
-- HTML tags (<div>, <span>, <br>, <p>, etc.)
-- JSON/code syntax (braces {}, brackets [], quotes around keys, colons after keys)
-- Code fences and backticks
-- Unnecessary asterisks, underscores, and special characters
-- Empty lines and excessive whitespace
-- Bullet point markers (-, *, •) — keep the text, remove the marker
+- HTML tags, JSON/code syntax, and code fences.
+- Unnecessary asterisks, underscores, and formatting characters.
+- Excessive whitespace and duplicate empty lines.
 
 Rules:
-1. Keep ALL actual text content intact. Do not summarize, rephrase, or remove any information.
-2. Output ONLY the cleaned plain text. No commentary, no explanation, no "Here is the cleaned text:" headers.
-3. Preserve paragraph breaks as single empty lines.`,
+1. Keep ALL actual factual lore content, character descriptions, abilities, and story info.
+2. If a section or paragraph is clearly just a site navigation menu or a list of related links, REMOVE IT COMPLETELY.
+3. Output ONLY the cleaned plain text. No commentary or meta-headers.
+4. Preserve paragraph breaks as single empty lines.`,
 
-    summary: `You are a text cleaner and summarizer. First, remove all formatting garbage (markdown, HTML, JSON syntax, code fences, asterisks, special characters). Then lightly summarize the content — compress it to be more concise while keeping all important information.
-
-Rules:
-1. Remove all formatting noise (markdown, HTML, JSON, code syntax, special characters).
-2. Summarize lightly — shorten verbose passages but keep ALL key facts, names, abilities, relationships, and details.
-3. Do NOT aggressively cut content. This is a light compression, not a heavy one.
-4. Output ONLY the cleaned and summarized text. No commentary, no headers, no "Here is the result:" prefixes.
-5. Do NOT output internal thoughts, reasoning, or "Refining..." messages.`,
-
-    heavy_summary: `You are a meticulous editor. Your job is to condense the text while preserving ALL factual information, dialogue, and characterization details, but removing fluff and repetition.
+    summary: `You are a text cleaner and summarizer. First, remove all formatting noise and "Wiki garbage" (navigation menus, sidebars, metadata, markdown, HTML). Then lightly summarize the content — compress it while keeping ALL important lore facts.
 
 Rules:
-1. Remove all formatting noise (markdown, HTML, JSON, code syntax, special characters).
-2. Keep ALL facts: what things are, what they do, history, appearance, relationships, quotes.
-3. Only remove: purely decorative flowery prose, excessive repetition, and emotional padding that adds no substance.
-4. Do NOT strip away context that is necessary for understanding.
-5. The output should be dense with information but still readable prose, not just dry bullet points.
-6. CRITICAL: Output ONLY the result text. Do NOT output internal thoughts, "Refining Final Output" headers, or any meta-commentary.`,
+1. Aggressively remove all site navigation, sidebar links, and metadata.
+2. Summarize lightly — shorten verbose passages but keep ALL key facts, names, abilities, and relationships.
+3. Output ONLY the cleaned and summarized text. No commentary.`,
+
+    heavy_summary: `You are a meticulous editor. Your job is to condense the text while preserving ALL factual information, but removing fluff, repetition, and site navigation garbage.
+
+Rules:
+1. Remove all site navigation, sidebars, and metadata.
+2. Keep ALL facts: what things are, what they do, history, appearance, relationships.
+3. Only remove: purely decorative flowery prose, excessive repetition, and site garbage.
+4. The output should be dense with information but still readable prose.
+5. Output ONLY the result text. No commentary.`,
 };
 
 export const LoreCleaner: FC<LoreCleanerProps> = ({ files, onFilesChange, settings }) => {
@@ -110,46 +107,70 @@ export const LoreCleaner: FC<LoreCleanerProps> = ({ files, onFilesChange, settin
     const handleCleanSelected = async () => {
         if (selectedFiles.length === 0 || processing) return;
         setProcessing(true);
-        setProcessProgress({ current: 0, total: selectedFiles.length, fileName: '' });
+        setProcessProgress({ current: 0, total: selectedFiles.length, fileName: 'Starting parallel processing...' });
 
-        let updatedFiles = [...files];
+        const updatedFiles = [...files];
+        const results: Record<string, { content?: string, error?: boolean }> = {};
+        let finishedCount = 0;
 
-        for (let i = 0; i < selectedFiles.length; i++) {
-            const fileId = selectedFiles[i];
+        // Process all selected files in parallel
+        await Promise.all(selectedFiles.map(async (fileId) => {
             const file = updatedFiles.find(f => f.id === fileId);
-            if (!file) continue;
-
-            setProcessProgress({ current: i + 1, total: selectedFiles.length, fileName: file.name });
-
-            const userMessage: ChatMessage = {
-                id: Date.now().toString(),
-                role: 'user',
-                content: file.content,
-                timestamp: Date.now(),
-            };
-
-            const response = await generateCompletion(settings, [userMessage], cleanPrompts[cleanMode]);
-
-            if (response.content && !response.error) {
-                updatedFiles = updatedFiles.map(f =>
-                    f.id === fileId
-                        ? {
-                            ...f,
-                            originalContent: f.originalContent || f.content,
-                            content: response.content,
-                            cleanMode: cleanMode,
-                            tokens: Math.floor(response.content.length / 4),
-                        }
-                        : f
-                );
-            } else {
-                updatedFiles = updatedFiles.map(f =>
-                    f.id === fileId ? { ...f, cleanMode: 'rejected' } : f
-                );
+            if (!file) {
+                finishedCount++;
+                return;
             }
-        }
 
-        onFilesChange(updatedFiles);
+            try {
+                const userMessage: ChatMessage = {
+                    id: Date.now().toString(),
+                    role: 'user',
+                    content: file.content,
+                    timestamp: Date.now(),
+                };
+
+                // Each file gets its own API call, but they run simultaneously
+                const response = await generateCompletion(settings, [userMessage], cleanPrompts[cleanMode]);
+
+                if (response.content && !response.error) {
+                    results[fileId] = { content: response.content };
+                } else {
+                    results[fileId] = { error: true };
+                }
+            } catch (e) {
+                console.error(`Error cleaning file ${file.name}:`, e);
+                results[fileId] = { error: true };
+            } finally {
+                finishedCount++;
+                setProcessProgress(prev => ({ 
+                    ...prev, 
+                    current: finishedCount,
+                    fileName: file.name
+                }));
+            }
+        }));
+
+        // Apply all results to the file list at once
+        const finalFiles = updatedFiles.map(f => {
+            const res = results[f.id];
+            if (res) {
+                if (res.error) {
+                    return { ...f, cleanMode: 'rejected' as const };
+                }
+                if (res.content) {
+                    return {
+                        ...f,
+                        originalContent: f.originalContent || f.content,
+                        content: res.content,
+                        cleanMode: cleanMode,
+                        tokens: Math.floor(res.content.length / 4),
+                    };
+                }
+            }
+            return f;
+        });
+
+        onFilesChange(finalFiles);
         setSelectedFiles([]);
         setProcessing(false);
         setProcessProgress({ current: 0, total: 0, fileName: '' });

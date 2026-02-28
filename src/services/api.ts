@@ -18,7 +18,8 @@ export async function generateCompletion(
     systemPrompt?: string,
     onUpdate?: (content: string) => void,
     onThought?: (thought: string) => void,
-    overrides?: GenerationOverrides // New parameter
+    overrides?: GenerationOverrides,
+    signal?: AbortSignal
 ): Promise<GenerationResponse> {
     const { active_preset } = settings;
 
@@ -30,11 +31,14 @@ export async function generateCompletion(
 
     try {
         if (settings.provider === 'gemini') {
-            return await generateGemini(settings, messages, systemPrompt, onUpdate, onThought, overrides);
+            return await generateGemini(settings, messages, systemPrompt, onUpdate, onThought, overrides, signal);
         } else {
-            return await generateOpenAI(settings, messages, systemPrompt, onUpdate);
+            return await generateOpenAI(settings, messages, systemPrompt, onUpdate, signal);
         }
     } catch (err: any) {
+        if (err.name === 'AbortError') {
+            return { content: '', error: 'Generation aborted' };
+        }
         console.error('API Error:', err);
         return { content: '', error: err.message || 'Unknown API error' };
     }
@@ -84,7 +88,8 @@ async function generateOpenAI(
     settings: APISettings,
     messages: ChatMessage[],
     systemPrompt?: string,
-    onUpdate?: (content: string) => void
+    onUpdate?: (content: string) => void,
+    signal?: AbortSignal
 ): Promise<GenerationResponse> {
     console.log('[API] generateOpenAI called');
     const { serverUrl, apiKey, model, active_preset } = settings;
@@ -123,7 +128,8 @@ async function generateOpenAI(
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`
         },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal
     });
 
     if (!response.ok) {
@@ -138,6 +144,10 @@ async function generateOpenAI(
         let accumulatedContent = '';
 
         while (!done) {
+            if (signal?.aborted) {
+                reader.cancel();
+                throw new Error('Generation aborted');
+            }
             const { value, done: readerDone } = await reader.read();
             done = readerDone;
             if (value) {
@@ -177,7 +187,8 @@ async function generateGemini(
     systemPrompt?: string,
     onUpdate?: (content: string) => void,
     onThought?: (thought: string) => void,
-    overrides?: GenerationOverrides
+    overrides?: GenerationOverrides,
+    signal?: AbortSignal
 ): Promise<GenerationResponse> {
     const { serverUrl, apiKey, model, active_preset } = settings;
 
@@ -266,7 +277,8 @@ async function generateGemini(
         const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            body: JSON.stringify(body),
+            signal
         });
 
         if (!response.ok) {
@@ -284,6 +296,10 @@ async function generateGemini(
 
         try {
             while (true) {
+                if (signal?.aborted) {
+                    reader.cancel();
+                    throw new Error('Generation aborted');
+                }
                 const { value, done: readerDone } = await reader.read();
                 if (readerDone) break;
 
@@ -335,7 +351,8 @@ async function generateGemini(
                     }
                 }
             }
-        } catch (err) {
+        } catch (err: any) {
+            if (err.name === 'AbortError') throw err;
             console.error('[Gemini API] Stream reading error:', err);
             if (accumulatedContent) return { content: accumulatedContent };
             throw err;
@@ -350,7 +367,8 @@ async function generateGemini(
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(body)
+            body: JSON.stringify(body),
+            signal
         });
 
         if (!response.ok) {

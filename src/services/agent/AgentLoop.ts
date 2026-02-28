@@ -2,6 +2,7 @@
 import { ToolManager } from './ToolManager';
 import { generateCompletion } from '../api';
 import { cleanJson } from '../../utils/jsonCleaner';
+import { fillTemplate, getDefaultPrompts } from '../../utils/systemPrompts';
 import type { AgentMessage, AgentThought, ToolCall, AgentStatus } from './types';
 import type { ChatMessage, APISettings } from '../../types';
 
@@ -11,6 +12,7 @@ export class AgentLoop {
   private context: any; // Contains helper functions (addKbFile, updateCharacter, etc.)
   private statusCallback: (status: AgentStatus) => void;
   private messageCallback: (msg: AgentMessage) => void;
+  private abortController: AbortController | null = null;
 
   constructor(
     settings: APISettings,
@@ -32,8 +34,19 @@ export class AgentLoop {
       }
   }
 
+  stop() {
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+  }
+
   // The main thinking loop
   async start(messages: ChatMessage[]) {
+    this.stop(); // Ensure any previous run is stopped
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
+
     this.statusCallback('thinking');
     
     // Inject preset prompts
@@ -94,194 +107,186 @@ export class AgentLoop {
     let step = 0;
 
     while (step < MAX_STEPS) {
+      if (signal.aborted) break;
       step++;
       
-      // Regenerate system prompt each step
-      const systemPrompt = `
-You are an advanced AI character designer and roleplay expert.
+      const isPlanMode = this.context.agentMode === 'plan';
+      const templateId = isPlanMode ? 'agent_plan' : 'agent_build';
 
-**CORE DIRECTIVE: STRICT EFFICIENCY**
-1.  **SIMPLE TASKS** (e.g., "rename", "change description", "add specific lore"):
-    - **ACT IMMEDIATELY.** Do not plan. Do not research.
-    - **STOP IMMEDIATELY** after the tool execution confirms success.
-    - **DO NOT** generate thoughts after the action is done. Just say "Done".
+      // Fallback to default if somehow missing
+      let templateBody = this.context.customPrompts?.[templateId];
+      if (!templateBody) {
+          templateBody = getDefaultPrompts()[templateId] || '';
+      }
 
-2.  **COMPLEX TASKS** (e.g., "create a character based on X", "research and build"):
-    - Research first (wiki_search -> read_page).
-    - Then process the info (Think).
-    - Then update the character.
-    - Once the character is updated, **STOP**.
+      const vars = {
+          characterState: JSON.stringify(this.context.character || {}, null, 2),
+          lorebookCount: String((this.context.lorebook?.entries || []).length),
+          lorebookState: JSON.stringify((this.context.lorebook?.entries || []).map((e: any) => ({ keys: e.keys, comment: e.comment })), null, 2),
+          wikiUrl: this.context.wikiUrl || 'Not configured. Provide a valid wikiUrl to research tools if needed.',
+          presetPrompts: presetPrompts,
+          toolDescriptions: this.toolManager.getSystemPromptPart(this.context.agentMode || 'build')
+      };
 
-**TERMINATION PROTOCOL:**
-- After a tool runs successfully, ask: "Is the user's *original* request fulfilled?"
-- **YES:** Output a short final message (e.g., "Updated.") and **STOP GENERATING THOUGHTS**.
-- **NO:** Continue to the next logical step.
-
-CURRENT CHARACTER STATE:
-${JSON.stringify(this.context.character || {}, null, 2)}
-
-CURRENT LOREBOOK ENTRIES (${(this.context.lorebook?.entries || []).length}):
-${JSON.stringify((this.context.lorebook?.entries || []).map((e: any) => ({ keys: e.keys, comment: e.comment })), null, 2)}
-
-CURRENT WIKI URL (for research tools):
-${this.context.wikiUrl || 'Not configured. Provide a valid wikiUrl to research tools if needed.'}
-
-${presetPrompts}
-
-${this.toolManager.getSystemPromptPart()}
-
-Process:
-1.  **Analyze**: Simple or Complex?
-2.  **Execute**: Use <command>.
-3.  **Verify**: Did it work?
-    - If YES and Task Complete -> Reply to user. **NO MORE THOUGHTS.**
-    - If NO -> Fix and retry.
-
-Format:
-- Use <thought> ONLY when you actually need to plan a complex move.
-- Use <command> to act.
-`;
+      const systemPrompt = fillTemplate(templateBody, vars);
 
       console.log(`[AgentLoop] Step ${step} started`);
       
       // 1. Generate response from AI
       let accumulatedNativeThought = '';
       
-      const response = await generateCompletion(
-          this.settings, 
-          processedApiMessages, 
-          systemPrompt, 
-          (partialContent) => {
-              // Update UI with partial content
-              const { thoughts: parsedThoughts, commands, text } = this.parseResponse(partialContent);
-              
-              // Combine session history with current step data
-              const currentThoughts = accumulatedNativeThought 
-                  ? [{
-                      type: 'thought' as const,
-                      content: accumulatedNativeThought,
-                      timestamp: Date.now()
-                  }, ...parsedThoughts] 
-                  : parsedThoughts;
+      try {
+        const response = await generateCompletion(
+            this.settings, 
+            processedApiMessages, 
+            systemPrompt, 
+            (partialContent) => {
+                if (signal.aborted) return;
+                // Update UI with partial content
+                const { thoughts: parsedThoughts, commands, text } = this.parseResponse(partialContent);
+                
+                // Combine session history with current step data
+                const currentThoughts = accumulatedNativeThought 
+                    ? [{
+                        type: 'thought' as const,
+                        content: accumulatedNativeThought,
+                        timestamp: Date.now()
+                    }, ...parsedThoughts] 
+                    : parsedThoughts;
 
-              // Append current step commands to session commands
-              const currentStepCommands = commands.map(c => ({ ...c, id: `step_${step}_${c.id}` }));
-              
-              const agentMsg: AgentMessage = {
-                role: 'assistant',
-                content: text,
-                thoughts: [...sessionThoughts, ...currentThoughts],
-                toolCalls: [...sessionToolCalls, ...currentStepCommands]
-              };
-              this.messageCallback(agentMsg);
-          },
-          (thoughtPart) => {
-              // Handle Native Thinking (Gemini 2.0)
-              accumulatedNativeThought = thoughtPart;
-              
-              const agentMsg: AgentMessage = {
+                // Append current step commands to session commands
+                const currentStepCommands = commands.map(c => ({ ...c, id: `step_${step}_${c.id}` }));
+                
+                const agentMsg: AgentMessage = {
                   role: 'assistant',
-                  content: '', 
-                  thoughts: [...sessionThoughts, {
-                      type: 'thought' as const,
-                      content: accumulatedNativeThought,
-                      timestamp: Date.now()
-                  }],
-                  toolCalls: [...sessionToolCalls]
-              };
-              this.messageCallback(agentMsg);
-          }
-      );
-      const content = response.content;
+                  content: text,
+                  thoughts: [...sessionThoughts, ...currentThoughts],
+                  toolCalls: [...sessionToolCalls, ...currentStepCommands]
+                };
+                this.messageCallback(agentMsg);
+            },
+            (thoughtPart) => {
+                if (signal.aborted) return;
+                // Handle Native Thinking (Gemini 2.0)
+                accumulatedNativeThought = thoughtPart;
+                
+                const agentMsg: AgentMessage = {
+                    role: 'assistant',
+                    content: '', 
+                    thoughts: [...sessionThoughts, {
+                        type: 'thought' as const,
+                        content: accumulatedNativeThought,
+                        timestamp: Date.now()
+                    }],
+                    toolCalls: [...sessionToolCalls]
+                };
+                this.messageCallback(agentMsg);
+            },
+            {},
+            signal
+        );
 
-      if (!content) {
-        console.error('[AgentLoop] No content received from API');
-        this.statusCallback('error');
-        return;
-      }
+        if (signal.aborted) break;
 
-      // 2. Parse the response for thoughts and commands
-      const { thoughts: finalParsedThoughts, commands, text } = this.parseResponse(content);
-      
-      let currentStepThoughts = finalParsedThoughts;
-      if (accumulatedNativeThought) {
-          currentStepThoughts = [{
-              type: 'thought',
-              content: accumulatedNativeThought,
-              timestamp: Date.now()
-          }, ...finalParsedThoughts];
-      }
+        const content = response.content;
 
-      // Update session accumulators PERMANENTLY for this step
-      sessionThoughts = [...sessionThoughts, ...currentStepThoughts];
-      
-      const uniqueCommands = commands.map(cmd => ({
-          ...cmd,
-          id: `step_${step}_${cmd.id}`
-      }));
-      sessionToolCalls = [...sessionToolCalls, ...uniqueCommands];
+        if (!content) {
+            if (response.error === 'Generation aborted') break;
+            console.error('[AgentLoop] No content received from API');
+            this.statusCallback('error');
+            return;
+        }
 
-      // Final update for this step
-      const agentMsg: AgentMessage = {
-        role: 'assistant',
-        content: text,
-        thoughts: sessionThoughts,
-        toolCalls: sessionToolCalls
-      };
-      
-      this.messageCallback(agentMsg);
-
-      // 3. Execute commands if any
-      if (uniqueCommands.length > 0) {
-        this.statusCallback('executing');
-        console.log(`[AgentLoop] Step ${step}: Executing ${uniqueCommands.length} commands`);
+        // 2. Parse the response for thoughts and commands
+        const { thoughts: finalParsedThoughts, commands, text } = this.parseResponse(content);
         
-        for (const cmd of uniqueCommands) {
-          console.log(`[AgentLoop] Executing command: ${cmd.name}`, cmd.arguments);
-          const result = await this.toolManager.execute(cmd.name, cmd.arguments, this.context);
-          
-          // Update the specific command in the SESSION array with its result
-          const cmdInSession = sessionToolCalls.find(c => c.id === cmd.id);
-          if (cmdInSession) {
-              cmdInSession.result = result;
-          }
-          
-          // Send update to UI
-          const updatedAgentMsg: AgentMessage = {
+        let currentStepThoughts = finalParsedThoughts;
+        if (accumulatedNativeThought) {
+            currentStepThoughts = [{
+                type: 'thought',
+                content: accumulatedNativeThought,
+                timestamp: Date.now()
+            }, ...finalParsedThoughts];
+        }
+
+        // Update session accumulators PERMANENTLY for this step
+        sessionThoughts = [...sessionThoughts, ...currentStepThoughts];
+        
+        const uniqueCommands = commands.map(cmd => ({
+            ...cmd,
+            id: `step_${step}_${cmd.id}`
+        }));
+        sessionToolCalls = [...sessionToolCalls, ...uniqueCommands];
+
+        // Final update for this step
+        const agentMsg: AgentMessage = {
             role: 'assistant',
             content: text,
             thoughts: sessionThoughts,
-            toolCalls: [...sessionToolCalls]
-          };
-          this.messageCallback(updatedAgentMsg);
-          
-          // Feed result back
-          processedApiMessages.push({
-            id: `step_${step}_cmd_${cmd.id}_req`,
-            timestamp: Date.now(),
-            role: 'assistant',
-            content: `<command name="${cmd.name}">...</command>` 
-          });
-          
-          processedApiMessages.push({
-            id: `step_${step}_cmd_${cmd.id}_res`,
-            timestamp: Date.now(),
-            role: 'system',
-            content: `Tool Output (${cmd.name}):\n${result}`
-          });
-        }
+            toolCalls: sessionToolCalls
+        };
+        
+        this.messageCallback(agentMsg);
 
-        this.statusCallback('observing');
-        continue; 
-      } else {
-        this.statusCallback('idle');
-        break;
+        // 3. Execute commands if any
+        if (uniqueCommands.length > 0) {
+            this.statusCallback('executing');
+            console.log(`[AgentLoop] Step ${step}: Executing ${uniqueCommands.length} commands`);
+
+            for (const cmd of uniqueCommands) {
+            if (signal.aborted) break;
+            console.log(`[AgentLoop] Executing command: ${cmd.name}`, cmd.arguments);
+            const result = await this.toolManager.execute(cmd.name, cmd.arguments, this.context);
+            
+            // Update the specific command in the SESSION array with its result
+            const cmdInSession = sessionToolCalls.find(c => c.id === cmd.id);
+            if (cmdInSession) {
+                cmdInSession.result = result;
+            }
+            
+            // Send update to UI
+            const updatedAgentMsg: AgentMessage = {
+                role: 'assistant',
+                content: text,
+                thoughts: sessionThoughts,
+                toolCalls: [...sessionToolCalls]
+            };
+            this.messageCallback(updatedAgentMsg);
+            
+            // Feed result back
+            processedApiMessages.push({
+                id: `step_${step}_cmd_${cmd.id}_req`,
+                timestamp: Date.now(),
+                role: 'assistant',
+                content: `<command name="${cmd.name}">...</command>` 
+            });
+            
+            processedApiMessages.push({
+                id: `step_${step}_cmd_${cmd.id}_res`,
+                timestamp: Date.now(),
+                role: 'system',
+                content: `Tool Output (${cmd.name}):\n${result}`
+            });
+            }
+
+            if (signal.aborted) break;
+            this.statusCallback('observing');
+            continue; 
+        } else {
+            this.statusCallback('idle');
+            break;
+        }
+      } catch (err: any) {
+        if (err.name === 'AbortError' || err.message === 'Generation aborted') {
+          console.log('[AgentLoop] Aborted');
+          break;
+        }
+        throw err;
       }
     }
     
-    if (step >= MAX_STEPS) {
-        this.statusCallback('idle');
-    }
+    this.statusCallback('idle');
+    this.abortController = null;
   }
 
   // Parse XML-like tags from the AI response
