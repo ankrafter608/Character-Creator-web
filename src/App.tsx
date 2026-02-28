@@ -15,7 +15,7 @@ import { HistoryViewer } from './components/HistoryViewer';
 import { ArtsManager } from './components/ArtsManager';
 import { saveState, loadState } from './utils/storage';
 import { generateCompletion } from './services/api';
-import { countTokens } from './utils/tokenCounter';
+import { countTokens, countTokensAsync } from './utils/tokenCounter';
 import { getDefaultPrompts, fillTemplate } from './utils/systemPrompts';
 import type { PageId, CharacterData, LorebookData, ChatMessage, APISettings, KBFile, ChatSession, PresetProfile, ConnectionProfile, CharacterHistoryEntry, LorebookHistoryEntry, ArtPrompt } from './types';
 import type { CustomPrompts } from './utils/systemPrompts';
@@ -195,21 +195,36 @@ function App() {
   useEffect(() => {
     if (!settings.tokenizer) return;
     
-    setKbFiles(prevFiles => {
-        const newFiles = prevFiles.map(f => {
-            const newTokens = countTokens(f.content, settings.tokenizer as any);
-            if (newTokens !== f.tokens) {
-                return { ...f, tokens: newTokens };
-            }
-            return f;
+    const recomputeTokens = async () => {
+      setKbFiles(prevFiles => {
+        // Apply instant heuristic to stay responsive
+        return prevFiles.map(f => ({
+          ...f,
+          tokens: countTokens(f.content, settings.tokenizer as any)
+        }));
+      });
+
+      // Fetch precise values in the background
+      const updatedPromises = kbFiles.map(async (f) => {
+        const exactTokens = await countTokensAsync(f.content, settings.tokenizer as any);
+        return { id: f.id, tokens: exactTokens };
+      });
+
+      const updatedResults = await Promise.all(updatedPromises);
+
+      // Apply precise values
+      setKbFiles(prevFiles => {
+        return prevFiles.map(f => {
+          const match = updatedResults.find(res => res.id === f.id);
+          if (match && match.tokens !== f.tokens) {
+            return { ...f, tokens: match.tokens };
+          }
+          return f;
         });
-        
-        // Return same object if no changes to avoid re-renders
-        if (newFiles.every((f, i) => f === prevFiles[i])) {
-            return prevFiles;
-        }
-        return newFiles;
-    });
+      });
+    };
+
+    recomputeTokens();
   }, [settings.tokenizer]);
 
   // Auto-select first profile if none is active (fallback for new users)

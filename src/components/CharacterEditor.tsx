@@ -1,7 +1,7 @@
 import type { FC } from 'react';
 import type { CharacterData, APISettings } from '../types';
 import { usePersistentHeights } from '../hooks/usePersistentLayout';
-import { countTokens } from '../utils/tokenCounter';
+import { useTokenCount } from '../utils/tokenCounter';
 
 interface CharacterEditorProps {
     character: CharacterData;
@@ -69,6 +69,11 @@ const fields: { id: keyof CharacterData; label: string; icon: string; rows: numb
         colSpan: 12
     },
 ];
+
+const FieldTokenCounter: FC<{ text: string, tokenizer: APISettings['tokenizer'] }> = ({ text, tokenizer }) => {
+    const count = useTokenCount(text || '', tokenizer || 'openai');
+    return <>{count}</>;
+};
 
 export const CharacterEditor: FC<CharacterEditorProps> = ({ character, onChange, onOpenLibrary, onNew, settings }) => {
     const { track, heights } = usePersistentHeights('character_editor_layout');
@@ -179,7 +184,7 @@ export const CharacterEditor: FC<CharacterEditorProps> = ({ character, onChange,
                         </div>
                         <div className="field-footer">
                             <span className="token-count">
-                                {countTokens(character[field.id] as string, settings.tokenizer || 'openai')} tokens
+                                <FieldTokenCounter text={character[field.id] as string} tokenizer={settings.tokenizer} /> tokens
                             </span>
                         </div>
                     </div>

@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { FC } from 'react';
 import type { KBFile } from '../types';
-import { countTokens, type TokenizerType } from '../utils/tokenCounter';
+import { countTokens, countTokensAsync, type TokenizerType } from '../utils/tokenCounter';
 
 interface FileManagerProps {
     files: KBFile[];
@@ -40,11 +40,15 @@ export const FileManager: FC<FileManagerProps> = ({ files, onFilesChange, tokeni
             
             newFiles.forEach((fileObj, index) => {
                 const reader = new FileReader();
-                reader.onload = (evt) => {
+                reader.onload = async (evt) => {
                     fileObj.content = evt.target?.result as string;
-                    // FIX: Explicitly log and use the captured tokenizer
-                    console.log(`[FileManager] Counting tokens for ${fileObj.name} using ${currentTokenizer}`);
+                    // Start with an immediate heuristic count
                     fileObj.tokens = countTokens(fileObj.content, currentTokenizer as TokenizerType);
+                    
+                    // Replace with an accurate async count
+                    const exactTokens = await countTokensAsync(fileObj.content, currentTokenizer as TokenizerType);
+                    fileObj.tokens = exactTokens;
+                    
                     processedCount++;
                     if (processedCount === newFiles.length) {
                         onFilesChange([...files, ...newFiles]);
@@ -79,25 +83,41 @@ export const FileManager: FC<FileManagerProps> = ({ files, onFilesChange, tokeni
         const filesNeedingUpdate = files.filter(f => f.tokens === 0 && f.content.length > 0);
         if (filesNeedingUpdate.length > 0) {
             console.log('[FileManager] Recounting tokens for loaded files...');
-            onFilesChange(files.map(f => {
-                if ((!f.tokens || f.tokens === 0) && f.content && f.content.length > 0) {
-                    return { ...f, tokens: countTokens(f.content, (tokenizer as TokenizerType) || 'openai') };
-                }
-                return f;
-            }));
+            const recountTokens = async () => {
+                const updatedFiles = await Promise.all(
+                    files.map(async (f) => {
+                        if ((!f.tokens || f.tokens === 0) && f.content && f.content.length > 0) {
+                            const newTokens = await countTokensAsync(f.content, (tokenizer as TokenizerType) || 'openai');
+                            return { ...f, tokens: newTokens };
+                        }
+                        return f;
+                    })
+                );
+                onFilesChange(updatedFiles);
+            };
+            recountTokens();
         }
     }, []); 
 
     const handleContentChange = (newContent: string) => {
         if (selectedFileId) {
-
-            // Log for debugging
-            // console.log(`[FileManager] Re-counting tokens for ${selectedFileId}`);
+            const currentTokenizer = (tokenizer as TokenizerType) || 'openai';
+            // First apply instant heuristic to keep UI responsive
+            const heuristicTokens = countTokens(newContent, currentTokenizer);
             onFilesChange(files.map(f => f.id === selectedFileId ? {
                 ...f,
                 content: newContent,
-                tokens: countTokens(newContent, (tokenizer as TokenizerType) || 'openai')
+                tokens: heuristicTokens
             } : f));
+
+            // Then fetch precise token count asynchronously
+            countTokensAsync(newContent, currentTokenizer).then((exactTokens) => {
+                onFilesChange(files.map(f => f.id === selectedFileId ? {
+                    ...f,
+                    content: newContent,
+                    tokens: exactTokens
+                } : f));
+            }).catch(e => console.error("Error fetching tokens:", e));
         }
     };
 
