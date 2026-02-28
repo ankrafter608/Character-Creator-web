@@ -13,6 +13,7 @@ export class AgentLoop {
   private statusCallback: (status: AgentStatus) => void;
   private messageCallback: (msg: AgentMessage) => void;
   private abortController: AbortController | null = null;
+  private executedTools: Set<string> = new Set(); // Anti-loop guardrail
 
   constructor(
     settings: APISettings,
@@ -39,6 +40,11 @@ export class AgentLoop {
       this.abortController.abort();
       this.abortController = null;
     }
+  }
+
+  clearToolHistory() {
+      this.executedTools.clear();
+      console.log('[AgentLoop] Tool execution history cleared.');
   }
 
   // The main thinking loop
@@ -256,8 +262,20 @@ export class AgentLoop {
 
             for (const cmd of uniqueCommands) {
             if (signal.aborted) break;
-            console.log(`[AgentLoop] Executing command: ${cmd.name}`, cmd.arguments);
-            const result = await this.toolManager.execute(cmd.name, cmd.arguments, this.context);
+            
+            // Anti-Loop Guardrail: Strict Duplicate Check
+            const argsStringForHash = JSON.stringify(cmd.arguments || {});
+            const cmdHash = `${cmd.name}:${argsStringForHash}`;
+            
+            let result = '';
+            if (this.executedTools.has(cmdHash)) {
+                console.warn(`[AgentLoop] Blocked duplicate command: ${cmdHash}`);
+                result = `SYSTEM ERROR: You have already executed the tool "${cmd.name}" with these exact parameters. Duplicate tool calls are strictly forbidden to prevent infinite loops. You MUST proceed to the next logical step using the information you already gathered.`;
+            } else {
+                console.log(`[AgentLoop] Executing command: ${cmd.name}`, cmd.arguments);
+                this.executedTools.add(cmdHash);
+                result = await this.toolManager.execute(cmd.name, cmd.arguments, this.context);
+            }
             
             // Update the specific command in the SESSION array with its result
             const cmdInSession = sessionToolCalls.find(c => c.id === cmd.id);

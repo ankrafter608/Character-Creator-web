@@ -423,6 +423,9 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
     const handleClearChat = () => {
         onUpdateMessages([]);
         setInitialCharacter(null); // Reset diff tracking if needed, or keep it to show cumulative changes
+        if (agentRef.current) {
+            agentRef.current.clearToolHistory();
+        }
     };
 
     return (

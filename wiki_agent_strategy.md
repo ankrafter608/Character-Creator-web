@@ -34,3 +34,11 @@ A settings gear (⚙️) is added to the Autonomous Mode UI, allowing the user t
 **Solution:**
 1. Added a `findFileFuzzy` helper in `ToolManager.ts` that automatically resolves underscores, lowercase mismatches, and hallucinatory suffixes like `_summary`.
 2. Updated the `clean_file` and `read_file` tool descriptions with explicit warnings: `WARNING: File names DO NOT change after cleaning. Do NOT add "_summary" to the name.`
+
+## Update 2: Anti-Loop Guardrail (Strict Duplicate Check)
+**Problem:** The AI can get stuck in a reasoning loop, repeatedly calling `wiki_extract_keywords` with the exact same keywords instead of proceeding to select and download pages.
+**Solution:**
+1. Added an `executedTools: Set<string>` to `AgentLoop.ts`.
+2. Before executing any tool, the system checks if a combination of `toolName + JSON.stringify(arguments)` has already been called in the current session.
+3. If a strict duplicate is detected, execution is blocked, and the AI receives a hardcoded `SYSTEM ERROR` reminding it that duplicate calls are forbidden and it must proceed to the next step.
+4. The history is cleared when the user clicks "Clear History" in the UI.
