@@ -1,7 +1,34 @@
 // Registry of tools for the autonomous agent
 import type { ToolDefinition } from './types';
+import { fetchAllPages } from '../../utils/wikiUtils';
 import { getApiUrl, searchWiki, fetchPageContent } from '../../components/WikiScraper';
 import { generateCompletion } from '../../services/api';
+
+
+// Helper to find files even if the AI hallucinates underscores or suffixes
+function findFileFuzzy(kbFiles: any[], name: string) {
+    if (!kbFiles) return null;
+    
+    // 1. Exact match
+    let file = kbFiles.find((f: any) => f.name === name);
+    if (file) return file;
+    
+    // 2. Case insensitive
+    file = kbFiles.find((f: any) => f.name.toLowerCase() === name.toLowerCase());
+    if (file) return file;
+    
+    // 3. AI hallucinates underscores instead of spaces or slashes
+    const normalizedTarget = name.replace(/_/g, ' ').replace(/\//g, ' ').toLowerCase();
+    file = kbFiles.find((f: any) => f.name.replace(/_/g, ' ').replace(/\//g, ' ').toLowerCase() === normalizedTarget);
+    if (file) return file;
+    
+    // 4. AI hallucinates "_summary" or similar suffixes
+    const baseTarget = name.replace(/_summary\.txt/i, '.txt').replace(/_cleaned\.txt/i, '.txt').toLowerCase();
+    file = kbFiles.find((f: any) => f.name.toLowerCase() === baseTarget);
+    if (file) return file;
+    
+    return null;
+}
 
 const CLEAN_PROMPTS = {
     strip: `You are a text cleaner. Remove formatting garbage (markdown, HTML, JSON, code fences) but keep ALL text content intact. Output ONLY the plain text.`,
@@ -117,6 +144,64 @@ I need to check the wiki first.
       }
     });
 
+    
+    // 1.5 Smart Wiki Keyword Extractor (Map-Reduce)
+    this.register({
+      name: 'wiki_extract_keywords',
+      description: 'Use this to search a massive wiki (5000+ pages) safely. Provide keywords related to your task. The system will download ALL page titles, filter them locally using your keywords, and return a short, relevant list of exact page titles.',
+      parameters: {
+        type: 'object',
+        properties: {
+          keywords: { type: 'array', items: { type: 'string' }, description: 'List of specific keywords to filter pages by (e.g. ["Saber", "Artoria", "Excalibur"])' },
+          wikiUrl: { type: 'string', description: 'REQUIRED if current wiki URL is not configured. Example: "https://typemoon.fandom.com"' }
+        },
+        required: ['keywords']
+      },
+      execute: async ({ keywords, wikiUrl: explicitUrl }, context) => {
+        let urlToUse = explicitUrl || context.wikiUrl;
+        
+        if (urlToUse && !urlToUse.startsWith('http')) {
+            urlToUse = `https://${urlToUse}`;
+        }
+
+        if (!urlToUse || urlToUse.trim() === '') {
+            return 'Error: No Wiki URL configured or provided. You MUST provide the "wikiUrl" parameter.';
+        }
+        
+        try {
+            const apiUrl = getApiUrl(urlToUse);
+            console.log(`[ToolManager] Extracting keywords for ${urlToUse}: `, keywords);
+            
+            // This might take a few seconds
+            const allPages = await fetchAllPages(apiUrl, 5000);
+            
+            // Filter locally
+            const filteredPages = allPages.filter((p: string) => {
+                const lowerP = p.toLowerCase();
+                return keywords.some((k: string) => lowerP.includes(k.toLowerCase()));
+            });
+
+            if (filteredPages.length === 0) {
+                return `No pages matched the keywords [${keywords.join(', ')}] on ${urlToUse}. Try different keywords.`;
+            }
+            
+            // Limit to 50 results to prevent context bloat
+            const limitedPages = filteredPages.slice(0, 50);
+            
+            let result = `Found ${filteredPages.length} relevant pages matching your keywords. Here are the top matches:\n`;
+            result += limitedPages.map((p: string) => `- ${p}`).join('\n');
+            if (filteredPages.length > 50) {
+                result += `\n...and ${filteredPages.length - 50} more.`;
+            }
+            
+            return result;
+        } catch (e: any) {
+            return `Failed to extract keywords and fetch pages: ${e.message}`;
+        }
+      }
+    });
+
+
     // 2. Download Wiki Page Tool
     this.register({
       name: 'download_wiki_page',
@@ -179,7 +264,7 @@ I need to check the wiki first.
     // 3. Read File Tool (Added to read from KB)
     this.register({
         name: 'read_file',
-        description: 'Read the content of a file from the local Knowledge Base. Use list_files to see what is available.',
+        description: 'Read the content of a file from the local Knowledge Base. Use list_files to see what is available. WARNING: File names DO NOT change after cleaning. Do NOT add "_summary" to the name.',
         parameters: {
             type: 'object',
             properties: {
@@ -190,8 +275,12 @@ I need to check the wiki first.
         execute: async ({ name }, context) => {
             const { kbFiles } = context;
             if (!kbFiles) return "Error: Knowledge Base is empty.";
-            const file = kbFiles.find((f: any) => f.name === name);
-            if (!file) return `Error: File "${name}" not found in KB.`;
+            
+            const file = findFileFuzzy(kbFiles, name);
+            
+            if (!file) {
+                 return `Error: File "${name}" not found. Available files are: ${kbFiles.map((f:any)=>f.name).join(', ')}`;
+            }
             
             return `Content of "${name}":\n\n${file.content}`;
         }
@@ -268,7 +357,7 @@ I need to check the wiki first.
     // 6. Clean File Tool
     this.register({
         name: 'clean_file',
-        description: 'Clean or summarize a text file in the Knowledge Base to reduce token usage. You MUST provide the exact file "name" and choose a "mode" ("strip" or "summary").',
+        description: 'Clean or summarize a text file in the Knowledge Base to reduce token usage. You MUST provide the exact file "name" and choose a "mode" ("strip" or "summary"). WARNING: Cleaning overwrites the file in place. It DOES NOT create a new file or change the name. Do NOT hallucinate "_summary" suffixes.',
         parameters: {
             type: 'object',
             properties: {
@@ -282,8 +371,11 @@ I need to check the wiki first.
             const { kbFiles, updateKbFile, settings } = context;
             if (!kbFiles) return "Error: No files available.";
             
-            const file = kbFiles.find((f: any) => f.name === name);
-            if (!file) return `Error: File "${name}" not found.`;
+            const file = findFileFuzzy(kbFiles, name);
+            
+            if (!file) {
+                 return `Error: File "${name}" not found. Available files are: ${kbFiles.map((f:any)=>f.name).join(', ')}`;
+            }
 
             if (!settings) return "Error: Settings missing.";
 

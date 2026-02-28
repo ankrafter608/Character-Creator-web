@@ -113,6 +113,26 @@ export class AgentLoop {
       const isPlanMode = this.context.agentMode === 'plan';
       const templateId = isPlanMode ? 'agent_plan' : 'agent_build';
 
+      // Determine Wiki Strategy Instructions
+      const wikiStrategy = this.context.wikiStrategy || 'smart';
+      let wikiStrategyInstructions = '';
+      if (wikiStrategy === 'smart') {
+          wikiStrategyInstructions = `1.  **STRICT WORKFLOW FOR LARGE DATA (MAP-REDUCE WIKI FETCHING):**
+    - **STEP 1: BROAD SEARCH.** Use \`wiki_extract_keywords\` to scan all 5000+ pages of a wiki safely. Provide 2-5 specific keywords (e.g., ["Saber", "Artoria", "Excalibur"]).
+    - **STEP 2: STOP AND WAIT.** After receiving the list of filtered page titles from the tool, **YOU MUST NOT EXECUTE ANY OTHER TOOLS**. Just show the list to the user and ask "Should I download these pages?". Wait for their confirmation in the next message.
+    - **STEP 3: SELECTIVE DOWNLOAD.** Once the user confirms, use \`download_wiki_page\` strictly for the most critical titles (up to 5 pages) from that list. Do NOT download everything.
+    - **STEP 4: CLEAN.** Use \`clean_file\` (mode: summary or heavy_summary) on the downloaded files **BEFORE READING THEM**. This is mandatory for files over 5000 tokens.
+    - **STEP 5: READ CLEANED INFO.** Use \`read_file\` ONLY on the summarized/cleaned versions. 
+    - **Goal:** Never waste context window on raw wiki garbage or redundant searches.`;
+      } else {
+          wikiStrategyInstructions = `1.  **STRICT WORKFLOW FOR LARGE DATA (LEGACY WIKI SEARCH):**
+    - **STEP 1: BROAD SEARCH.** Use \`wiki_search\` with general terms (e.g., "characters", "lore", "universe overview") to get a list of many pages at once.
+    - **STEP 2: SELECTIVE DOWNLOAD.** From the search results, pick up to the **10 most critical pages**. Do NOT download everything.
+    - **STEP 3: CLEAN.** Use \`clean_file\` (mode: summary or heavy_summary) on the downloaded files **BEFORE READING THEM**. This is mandatory for files over 5000 tokens.
+    - **STEP 4: READ CLEANED INFO.** Use \`read_file\` ONLY on the summarized/cleaned versions.
+    - **Goal:** Never waste context window on raw wiki garbage or redundant searches.`;
+      }
+
       // Fallback to default if somehow missing
       let templateBody = this.context.customPrompts?.[templateId];
       if (!templateBody) {
@@ -120,6 +140,7 @@ export class AgentLoop {
       }
 
       const vars = {
+          wikiStrategyInstructions,
           characterState: JSON.stringify(this.context.character || {}, null, 2),
           lorebookCount: String((this.context.lorebook?.entries || []).length),
           lorebookState: JSON.stringify((this.context.lorebook?.entries || []).map((e: any) => ({ keys: e.keys, comment: e.comment })), null, 2),

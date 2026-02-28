@@ -49,6 +49,8 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
     const [collapsedSteps, setCollapsedSteps] = useState<Record<string, boolean>>({});
     const [initialCharacter, setInitialCharacter] = useState<CharacterData | null>(null);
     const [agentMode, setAgentMode] = useState<'build' | 'plan'>('build');
+    const [wikiStrategy, setWikiStrategy] = useState<'smart' | 'legacy'>('smart');
+    const [showSettings, setShowSettings] = useState(false);
     
     const agentRef = useRef<AgentLoop | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -84,6 +86,7 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
                     character,
                     lorebook,
                     agentMode,
+                    wikiStrategy,
                     addKbFile: onAddKbFile,
                     updateKbFile: onUpdateKbFile,
                     updateCharacter: (data: any) => {
@@ -142,6 +145,7 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
                 character,
                 lorebook,
                 agentMode,
+                wikiStrategy,
                 addKbFile: onAddKbFile,
                 updateKbFile: onUpdateKbFile,
                 updateCharacter: onUpdateCharacter,
@@ -150,7 +154,7 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
                 customPrompts
             });
         }
-    }, [wikiUrl, kbFiles, character, lorebook, agentMode, onAddKbFile, onUpdateKbFile, onUpdateCharacter, onAddLorebookEntry, settings, customPrompts]);
+    }, [wikiUrl, kbFiles, character, lorebook, agentMode, wikiStrategy, onAddKbFile, onUpdateKbFile, onUpdateCharacter, onAddLorebookEntry, settings, customPrompts]);
 
     const handleSend = async () => {
         if (agentStatus !== 'idle') {
@@ -460,24 +464,76 @@ export const AutonomousMode: FC<AutonomousModeProps> = ({
                 {/* Input Area */}
                 <div className="chat-input-area" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px' }}>
                     {/* Tool Bar */}
-                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                        <div
-                            className={`agent-mode-toggle${agentMode === 'plan' ? ' active' : ''}${agentStatus !== 'idle' ? ' disabled' : ''}`}
-                            onClick={() => {
-                                if (agentStatus === 'idle') setAgentMode('plan');
-                            }}
-                            title="Plan mode: Brainstorm and discuss without modifying files"
-                        >
-                            📝 Plan
+                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            <div
+                                className={`agent-mode-toggle${agentMode === 'plan' ? ' active' : ''}${agentStatus !== 'idle' ? ' disabled' : ''}`}
+                                onClick={() => {
+                                    if (agentStatus === 'idle') setAgentMode('plan');
+                                }}
+                                title="Plan mode: Brainstorm and discuss without modifying files"
+                            >
+                                📝 Plan
+                            </div>
+                            <div
+                                className={`agent-mode-toggle${agentMode === 'build' ? ' active' : ''}${agentStatus !== 'idle' ? ' disabled' : ''}`}
+                                onClick={() => {
+                                    if (agentStatus === 'idle') setAgentMode('build');
+                                }}
+                                title="Build mode: Allow AI to use tools and modify the character/lorebook"
+                            >
+                                ⚙️ Build
+                            </div>
                         </div>
-                        <div
-                            className={`agent-mode-toggle${agentMode === 'build' ? ' active' : ''}${agentStatus !== 'idle' ? ' disabled' : ''}`}
-                            onClick={() => {
-                                if (agentStatus === 'idle') setAgentMode('build');
-                            }}
-                            title="Build mode: Allow AI to use tools and modify the character/lorebook"
-                        >
-                            ⚙️ Build
+                        <div style={{ position: 'relative' }}>
+                            <button 
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => setShowSettings(!showSettings)}
+                                title="Agent Settings"
+                                style={{ padding: '4px', fontSize: '1.2rem' }}
+                                disabled={agentStatus !== 'idle'}
+                            >
+                                ⚙️
+                            </button>
+                            {showSettings && (
+                                <div style={{
+                                    position: 'absolute',
+                                    bottom: '100%',
+                                    right: 0,
+                                    marginBottom: '8px',
+                                    background: 'var(--bg-card)',
+                                    border: '1px solid var(--border-subtle)',
+                                    borderRadius: '8px',
+                                    padding: '12px',
+                                    width: '250px',
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                                    zIndex: 100
+                                }}>
+                                    <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem' }}>Agent Settings</h4>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                        <label style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                            <span style={{ fontWeight: 'bold' }}>Wiki Strategy</span>
+                                            <select 
+                                                className="input" 
+                                                value={wikiStrategy} 
+                                                onChange={(e) => {
+                                                    setWikiStrategy(e.target.value as 'smart' | 'legacy');
+                                                    setShowSettings(false);
+                                                }}
+                                                style={{ padding: '4px', fontSize: '0.85rem' }}
+                                            >
+                                                <option value="smart">Smart (Map-Reduce Keywords)</option>
+                                                <option value="legacy">Legacy (Direct Search)</option>
+                                            </select>
+                                        </label>
+                                        <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                            {wikiStrategy === 'smart' 
+                                                ? 'AI downloads all titles and filters locally. Best for massive wikis to prevent lag.' 
+                                                : 'AI relies on standard MediaWiki search API. Prone to missing pages.'}
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
 

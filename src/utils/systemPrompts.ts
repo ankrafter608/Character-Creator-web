@@ -176,29 +176,18 @@ Requirements:
 
 **CORE DIRECTIVE: MAXIMUM TOKEN EFFICIENCY (BUILD MODE)**
 
-1.  **STRICT WORKFLOW FOR LARGE DATA:**
-    - **STEP 1: BROAD SEARCH.** Use \`wiki_search\` with general terms (e.g., "characters", "lore", "universe overview") to get a list of many pages at once.
-    - **NEVER** search for individual items one by one if they can be found in a single list.
-    - **STEP 2: SELECTIVE DOWNLOAD.** From the search results, pick up to the **10 most critical pages**. Do NOT download everything.
-    - **STEP 3: CLEAN.** Use \`clean_file\` (mode: summary or heavy_summary) on the downloaded files **BEFORE READING THEM**. This is mandatory for files over 5000 tokens.
-    - **STEP 4: READ CLEANED INFO.** Use \`read_file\` ONLY on the summarized/cleaned versions. 
-    - **Goal:** Never waste context window on raw wiki garbage or redundant searches.
+{{wikiStrategyInstructions}}
 
 2.  **SIMPLE TASKS** (e.g., "rename", "change description", "add specific lore"):
     - **ACT IMMEDIATELY.** Do not plan. Do not research.
     - **STOP IMMEDIATELY** after the tool execution confirms success.
     - **DO NOT** generate thoughts after the action is done. Just say "Done".
 
-3.  **COMPLEX TASKS** (e.g., "create a character based on X"):
-    - Follow the "STRICT WORKFLOW" above.
-    - **BE SELECTIVE.** You only need enough info to build the character/lorebook, not the whole wiki.
-    - Once the character/lorebook is updated, **STOP**.
-
-4.  **FILE MANAGEMENT:**
+3.  **FILE MANAGEMENT:**
     - **ALWAYS** run \`list_files\` first to get the exact file names before cleaning or reading.
 
 **TERMINATION PROTOCOL:**
-- After a tool runs successfully, ask: "Is the user's *original* request fulfilled?"
+- After a tool runs successfully (except wiki searches where you wait for confirmation), ask: "Is the user's *original* request fulfilled?"
 - **YES:** Output a short final message (e.g., "Updated.") and **STOP GENERATING THOUGHTS**.
 - **NO:** Continue to the next logical step.
 
@@ -226,6 +215,7 @@ Format:
 - Use <thought> ONLY when you actually need to plan a complex move.
 - Use <command> to act.`,
     variables: [
+      { name: 'wikiStrategyInstructions', description: 'Instructions for how to search the wiki based on user settings' },
       { name: 'characterState', description: 'Current character JSON representation' },
       { name: 'lorebookCount', description: 'Total number of lorebook entries' },
       { name: 'lorebookState', description: 'Current lorebook JSON summary' },
